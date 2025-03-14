@@ -1,1 +1,1 @@
-# coursemos_downloader
+coursemos-downloader
