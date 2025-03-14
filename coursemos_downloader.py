@@ -21,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.0"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
 
@@ -576,21 +576,39 @@ class GitHubUpdaterManager:
             # 백그라운드 확인 시 알림만 표시
             self.parent.show_update_notification(new_version)
             return
-            
+        
         # 사용자에게 업데이트 물어보기
         detail_text = f"변경 사항:\n\n{release_notes}" if release_notes else ""
-        
+    
         msg_box = QMessageBox(self.parent)
         msg_box.setWindowTitle("업데이트 가능")
         msg_box.setText(f"새 버전({new_version})이 있습니다. 현재 버전: {APP_VERSION}")
-        msg_box.setInformativeText("지금 업데이트하시겠습니까?")
+        msg_box.setInformativeText(
+            "지금 업데이트하시겠습니까?\n\n"
+            "참고: 업데이트를 진행하면 프로그램이 자동으로 종료되고, "
+            "업데이트 완료 후 새 버전이 자동으로 실행됩니다."
+            )
         if detail_text:
             msg_box.setDetailedText(detail_text)
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg_box.setDefaultButton(QMessageBox.Yes)
-        
+    
         if msg_box.exec() == QMessageBox.Yes:
-            self.download_and_install_update(download_url)
+            self.parent.status_text.append("업데이트를 시작합니다. 프로그램이 잠시 후 재시작됩니다.")
+            QTimer.singleShot(2000, lambda: self.download_and_install_update(download_url))
+
+
+def on_update_completed(self, success, message):
+    """업데이트 완료 또는 실패 처리"""
+    if success:
+        QMessageBox.information(
+            self.parent, 
+            "업데이트", 
+            message + "\n\n프로그램이 잠시 후 종료되고 업데이트된 버전이 자동으로 실행됩니다."
+        )
+    else:
+        QMessageBox.warning(self.parent, "업데이트 실패", message)
+        self.parent.progress_bar.setVisible(False)
     
     def download_and_install_update(self, download_url):
         """업데이트 다운로드 및 설치"""
