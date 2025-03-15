@@ -14,18 +14,6 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QFileDialog
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 
-# pip install packaging (버전 비교용)
-try:
-    from packaging import version
-except ImportError:
-    print("packaging 모듈이 필요합니다. pip install packaging 명령으로 설치하세요.")
-    sys.exit(1)
-
-# 앱 버전 정보
-APP_VERSION = "1.0.19"
-GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
-GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
-
 def print_directory_structure(path, indent=0):
     """디렉토리 구조를 문자열로 반환합니다."""
     result = []
@@ -46,10 +34,20 @@ def print_directory_structure(path, indent=0):
     
     return result
 
-# DirectUpdater 클래스의 run 메서드 내에 다음 코드 추가 (ZIP 압축 해제 후):
-self.progress_update.emit("ZIP 구조 분석 중...", 65)
-structure = print_directory_structure(extract_dir)
-self.progress_update.emit("\n".join(["ZIP 파일 구조:"] + structure), 68)
+
+
+# pip install packaging (버전 비교용)
+try:
+    from packaging import version
+except ImportError:
+    print("packaging 모듈이 필요합니다. pip install packaging 명령으로 설치하세요.")
+    sys.exit(1)
+
+# 앱 버전 정보
+APP_VERSION = "1.0.20"
+GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
+GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
+
 
 
 class FFmpegManager:
@@ -253,12 +251,20 @@ class DirectUpdater(QThread):
             with zipfile.ZipFile(temp_zip, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             
+            # 디버깅: ZIP 파일 구조 출력
+            self.progress_update.emit("ZIP 구조 분석 중...", 65)
+            structure = print_directory_structure(extract_dir)
+            self.progress_update.emit("\n".join(["ZIP 파일 구조:"] + structure), 68)
+            
             # 3. 메인 파일 찾기 - 더 철저히 검색
             self.progress_update.emit("업데이트 파일 찾는 중...", 70)
             
             # 현재 파일 이름과 경로
             current_filename = os.path.basename(self.current_file)
             current_dir = os.path.dirname(self.current_file)
+            
+            # 디버깅: 현재 실행 중인 파일 정보
+            self.progress_update.emit(f"현재 실행 파일: {current_filename}", 72)
             
             # 가능한 실행 파일 이름들 (대소문자, 하이픈/언더스코어 차이 허용)
             possible_names = [
@@ -270,6 +276,9 @@ class DirectUpdater(QThread):
                 current_filename.lower().replace('-', '_')
             ]
             
+            # 디버깅: 검색할 파일명 목록
+            self.progress_update.emit(f"검색할 파일명: {', '.join(possible_names)}", 73)
+            
             # 파일 찾기
             main_file_path = None
             
@@ -278,6 +287,7 @@ class DirectUpdater(QThread):
                 for file in files:
                     # 파일 확장자 확인 (.exe 파일만 처리)
                     if file.lower().endswith('.exe'):
+                        self.progress_update.emit(f"발견된 EXE 파일: {file}", 74)
                         # 가능한 이름 중 하나와 일치하는지 확인
                         if file in possible_names or file.lower() in possible_names:
                             main_file_path = os.path.join(root, file)
@@ -301,7 +311,7 @@ class DirectUpdater(QThread):
                         break
             
             if not main_file_path:
-                self.progress_update.emit(f"실행 파일을 찾을 수 없습니다. ZIP 구조: {os.listdir(extract_dir)}", 0)
+                self.progress_update.emit("실행 파일을 찾을 수 없습니다.", 0)
                 self.update_completed.emit(False, f"업데이트 패키지에서 실행 파일을 찾을 수 없습니다.")
                 return
             
@@ -318,6 +328,7 @@ class DirectUpdater(QThread):
             
             # 5. 업데이트 배치 파일 생성
             batch_path = os.path.join(current_dir, "update.bat")
+            current_filename_no_ext = os.path.splitext(current_filename)[0]
             
             try:
                 with open(batch_path, 'w') as batch_file:
@@ -325,20 +336,20 @@ class DirectUpdater(QThread):
                     batch_file.write('echo Coursemos Downloader 업데이트 중...\n')
                     batch_file.write('echo 잠시만 기다려주세요...\n\n')
                     batch_file.write('timeout /t 2 /nobreak > nul\n\n')
-                    batch_file.write('if exist "%~dp0coursemos_downloader.exe.bak" (\n')
-                    batch_file.write('    del "%~dp0coursemos_downloader.exe.bak"\n')
+                    batch_file.write(f'if exist "%~dp0{current_filename}.bak" (\n')
+                    batch_file.write(f'    del "%~dp0{current_filename}.bak"\n')
                     batch_file.write(')\n\n')
-                    batch_file.write('if not exist "%~dp0coursemos_downloader_new.exe" (\n')
+                    batch_file.write(f'if not exist "%~dp0{current_filename_no_ext}_new.exe" (\n')
                     batch_file.write('    echo 업데이트 파일을 찾을 수 없습니다.\n')
                     batch_file.write('    goto :error\n')
                     batch_file.write(')\n\n')
-                    batch_file.write('ren "%~dp0coursemos_downloader.exe" "coursemos_downloader.exe.bak"\n')
+                    batch_file.write(f'ren "%~dp0{current_filename}" "{current_filename}.bak"\n')
                     batch_file.write('if errorlevel 1 goto :error\n\n')
-                    batch_file.write('ren "%~dp0coursemos_downloader_new.exe" "coursemos_downloader.exe"\n')
+                    batch_file.write(f'ren "%~dp0{current_filename_no_ext}_new.exe" "{current_filename}"\n')
                     batch_file.write('if errorlevel 1 goto :error\n\n')
                     batch_file.write('echo 업데이트가 성공적으로 완료되었습니다!\n')
                     batch_file.write('echo 프로그램을 다시 시작합니다...\n\n')
-                    batch_file.write('start "" "%~dp0coursemos_downloader.exe"\n')
+                    batch_file.write(f'start "" "%~dp0{current_filename}"\n')
                     batch_file.write('goto :end\n\n')
                     batch_file.write(':error\n')
                     batch_file.write('echo 업데이트 중 오류가 발생했습니다.\n')
