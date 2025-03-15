@@ -22,7 +22,7 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.17"
+APP_VERSION = "1.0.18"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
 
@@ -258,44 +258,61 @@ class DirectUpdater(QThread):
                 self.update_completed.emit(False, f"업데이트 패키지에서 {current_filename} 파일을 찾을 수 없습니다.")
                 return
             
-            # 4. 파일 백업
-            self.progress_update.emit("현재 파일 백업 중...", 80)
-            backup_file = self.current_file + ".bak"
+            # 4. 새 버전을 _new 파일로 복사
+            self.progress_update.emit("업데이트 파일 준비 중...", 80)
+            new_file_path = os.path.splitext(self.current_file)[0] + "_new.exe"
             
-            # 이미 백업 파일이 있다면 삭제
-            if os.path.exists(backup_file):
-                os.remove(backup_file)
+            try:
+                shutil.copy2(main_file_path, new_file_path)
+            except Exception as e:
+                self.progress_update.emit(f"업데이트 파일 복사 실패: {str(e)}", 0)
+                self.update_completed.emit(False, f"새 버전 파일을 복사하는 데 실패했습니다: {str(e)}")
+                return
             
-            # 현재 파일 백업
-            shutil.copy2(self.current_file, backup_file)
+            # 5. 업데이트 배치 파일 생성
+            batch_path = os.path.join(current_dir, "update.bat")
             
-            # 5. 새 파일 복사 - 재시도 로직 포함
-            self.progress_update.emit("파일 업데이트 중...", 90)
+            try:
+                with open(batch_path, 'w') as batch_file:
+                    batch_file.write('@echo off\n')
+                    batch_file.write('echo Coursemos Downloader 업데이트 중...\n')
+                    batch_file.write('echo 잠시만 기다려주세요...\n\n')
+                    batch_file.write('timeout /t 2 /nobreak > nul\n\n')
+                    batch_file.write('if exist "%~dp0coursemos_downloader.exe.bak" (\n')
+                    batch_file.write('    del "%~dp0coursemos_downloader.exe.bak"\n')
+                    batch_file.write(')\n\n')
+                    batch_file.write('if not exist "%~dp0coursemos_downloader_new.exe" (\n')
+                    batch_file.write('    echo 업데이트 파일을 찾을 수 없습니다.\n')
+                    batch_file.write('    goto :error\n')
+                    batch_file.write(')\n\n')
+                    batch_file.write('ren "%~dp0coursemos_downloader.exe" "coursemos_downloader.exe.bak"\n')
+                    batch_file.write('if errorlevel 1 goto :error\n\n')
+                    batch_file.write('ren "%~dp0coursemos_downloader_new.exe" "coursemos_downloader.exe"\n')
+                    batch_file.write('if errorlevel 1 goto :error\n\n')
+                    batch_file.write('echo 업데이트가 성공적으로 완료되었습니다!\n')
+                    batch_file.write('echo 프로그램을 다시 시작합니다...\n\n')
+                    batch_file.write('start "" "%~dp0coursemos_downloader.exe"\n')
+                    batch_file.write('goto :end\n\n')
+                    batch_file.write(':error\n')
+                    batch_file.write('echo 업데이트 중 오류가 발생했습니다.\n')
+                    batch_file.write('echo 관리자에게 문의하세요.\n')
+                    batch_file.write('pause\n\n')
+                    batch_file.write(':end\n')
+                    batch_file.write('exit\n')
+            except Exception as e:
+                self.progress_update.emit(f"업데이트 스크립트 생성 실패: {str(e)}", 0)
+                self.update_completed.emit(False, f"업데이트 스크립트 생성에 실패했습니다: {str(e)}")
+                return
             
-            max_retries = 5
-            for attempt in range(max_retries):
-                try:
-                    # 기존 파일 덮어쓰기
-                    shutil.copy2(main_file_path, self.current_file)
-                    break
-                except PermissionError:
-                    if attempt < max_retries - 1:
-                        self.progress_update.emit(f"권한 오류, 재시도 중... ({attempt+1}/{max_retries})", 90)
-                        time.sleep(1)  # 잠시 대기 후 재시도
-                    else:
-                        self.progress_update.emit("파일 업데이트 실패: 권한 오류", 0)
-                        self.update_completed.emit(False, "파일 쓰기 권한이 없습니다. 관리자 권한으로 실행해보세요.")
-                        return
-            
-            # 6. 업데이트 완료
-            self.progress_update.emit("업데이트 완료", 100)
-            self.update_completed.emit(True, f"업데이트가 성공적으로 완료되었습니다. 프로그램을 재시작하세요.")
-            
-            # 7. 임시 파일 정리
+            # 6. 임시 파일 정리
             try:
                 shutil.rmtree(temp_dir)
             except:
                 pass  # 임시 파일 삭제 실패는 무시
+            
+            # 7. 업데이트 완료 - 성공 메시지 전송
+            self.progress_update.emit("업데이트 파일 준비 완료", 100)
+            self.update_completed.emit(True, f"업데이트 파일이 준비되었습니다. 프로그램 종료 후 업데이트를 완료합니다.")
             
         except Exception as e:
             self.progress_update.emit(f"업데이트 오류: {str(e)}", 0)
@@ -490,18 +507,6 @@ class GitHubUpdaterManager:
         except:
             pass  # psutil 모듈이 없어도 계속 진행
         
-        # 쓰기 권한 확인
-        try:
-            with open(current_file, 'a'):
-                pass
-        except:
-            QMessageBox.warning(
-                self.parent,
-                "업데이트 불가",
-                "현재 파일에 쓰기 권한이 없습니다.\n관리자 권한으로 프로그램을 실행하거나, 파일 권한을 확인해주세요."
-            )
-            return
-        
         # 업데이트 스레드 시작
         self.updater = DirectUpdater(download_url, current_file)
         self.updater.progress_update.connect(self.parent.show_update_progress)
@@ -513,11 +518,20 @@ class GitHubUpdaterManager:
     def on_update_completed(self, success, message):
         """업데이트 완료 처리"""
         if success:
-            QMessageBox.information(
+            result = QMessageBox.information(
                 self.parent,
-                "업데이트 완료",
-                f"{message}\n\n프로그램을 종료 후 다시 실행하면 새 버전으로 실행됩니다."
+                "업데이트 준비 완료",
+                f"{message}\n\n지금 프로그램을 종료하고 업데이트를 진행하시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
             )
+            
+            if result == QMessageBox.Yes:
+                # 현재 디렉토리의 update.bat 실행 후 프로그램 종료
+                update_bat = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "update.bat")
+                if os.path.exists(update_bat):
+                    subprocess.Popen([update_bat], shell=True)
+                    QApplication.quit()  # 프로그램 종료
         else:
             QMessageBox.warning(self.parent, "업데이트 실패", message)
 
