@@ -22,9 +22,34 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.18"
+APP_VERSION = "1.0.19"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
+
+def print_directory_structure(path, indent=0):
+    """디렉토리 구조를 문자열로 반환합니다."""
+    result = []
+    
+    try:
+        items = os.listdir(path)
+        
+        for item in items:
+            item_path = os.path.join(path, item)
+            
+            if os.path.isdir(item_path):
+                result.append("  " * indent + f"📁 {item}/")
+                result.extend(print_directory_structure(item_path, indent + 1))
+            else:
+                result.append("  " * indent + f"📄 {item}")
+    except Exception as e:
+        result.append("  " * indent + f"❌ 오류: {str(e)}")
+    
+    return result
+
+# DirectUpdater 클래스의 run 메서드 내에 다음 코드 추가 (ZIP 압축 해제 후):
+self.progress_update.emit("ZIP 구조 분석 중...", 65)
+structure = print_directory_structure(extract_dir)
+self.progress_update.emit("\n".join(["ZIP 파일 구조:"] + structure), 68)
 
 
 class FFmpegManager:
@@ -228,34 +253,56 @@ class DirectUpdater(QThread):
             with zipfile.ZipFile(temp_zip, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             
-            # 3. 메인 파일 찾기
+            # 3. 메인 파일 찾기 - 더 철저히 검색
             self.progress_update.emit("업데이트 파일 찾는 중...", 70)
             
             # 현재 파일 이름과 경로
             current_filename = os.path.basename(self.current_file)
             current_dir = os.path.dirname(self.current_file)
             
-            # GitHub 압축 파일 구조 확인 (최상위 폴더 찾기)
-            extracted_items = os.listdir(extract_dir)
-            source_dir = extract_dir
+            # 가능한 실행 파일 이름들 (대소문자, 하이픈/언더스코어 차이 허용)
+            possible_names = [
+                current_filename,
+                current_filename.replace('_', '-'),
+                current_filename.replace('-', '_'),
+                current_filename.lower(),
+                current_filename.lower().replace('_', '-'),
+                current_filename.lower().replace('-', '_')
+            ]
             
-            # GitHub 구조: 보통 하나의 최상위 폴더가 있음
-            if len(extracted_items) == 1 and os.path.isdir(os.path.join(extract_dir, extracted_items[0])):
-                source_dir = os.path.join(extract_dir, extracted_items[0])
-            
-            # 메인 파일 찾기
+            # 파일 찾기
             main_file_path = None
-            for root, dirs, files in os.walk(source_dir):
+            
+            # 재귀적으로 모든 폴더 탐색
+            for root, dirs, files in os.walk(extract_dir):
                 for file in files:
-                    if file == current_filename:
-                        main_file_path = os.path.join(root, file)
-                        break
+                    # 파일 확장자 확인 (.exe 파일만 처리)
+                    if file.lower().endswith('.exe'):
+                        # 가능한 이름 중 하나와 일치하는지 확인
+                        if file in possible_names or file.lower() in possible_names:
+                            main_file_path = os.path.join(root, file)
+                            self.progress_update.emit(f"실행 파일을 찾았습니다: {file}", 75)
+                            break
+                
+                # 파일을 찾았다면 루프 종료
                 if main_file_path:
                     break
             
+            # 파일을 찾지 못한 경우, 마지막 수단으로 아무 .exe 파일이나 찾기
             if not main_file_path:
-                self.progress_update.emit(f"{current_filename} 파일을 찾을 수 없습니다.", 0)
-                self.update_completed.emit(False, f"업데이트 패키지에서 {current_filename} 파일을 찾을 수 없습니다.")
+                self.progress_update.emit("정확한 파일명 매치 실패, 대체 파일 검색 중...", 75)
+                for root, dirs, files in os.walk(extract_dir):
+                    for file in files:
+                        if file.lower().endswith('.exe'):
+                            main_file_path = os.path.join(root, file)
+                            self.progress_update.emit(f"대체 실행 파일을 찾았습니다: {file}", 75)
+                            break
+                    if main_file_path:
+                        break
+            
+            if not main_file_path:
+                self.progress_update.emit(f"실행 파일을 찾을 수 없습니다. ZIP 구조: {os.listdir(extract_dir)}", 0)
+                self.update_completed.emit(False, f"업데이트 패키지에서 실행 파일을 찾을 수 없습니다.")
                 return
             
             # 4. 새 버전을 _new 파일로 복사
@@ -317,7 +364,6 @@ class DirectUpdater(QThread):
         except Exception as e:
             self.progress_update.emit(f"업데이트 오류: {str(e)}", 0)
             self.update_completed.emit(False, f"업데이트 중 오류가 발생했습니다: {str(e)}")
-
 
 def format_time(seconds):
     """초 단위 시간을 시:분:초 형식으로 변환"""
