@@ -44,7 +44,7 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.20"
+APP_VERSION = "1.0.21"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
 
@@ -256,111 +256,164 @@ class DirectUpdater(QThread):
             structure = print_directory_structure(extract_dir)
             self.progress_update.emit("\n".join(["ZIP 파일 구조:"] + structure), 68)
             
-            # 3. 메인 파일 찾기 - 더 철저히 검색
+            # 3. 파일 찾기 - 파일 확장자 확인
             self.progress_update.emit("업데이트 파일 찾는 중...", 70)
             
             # 현재 파일 이름과 경로
             current_filename = os.path.basename(self.current_file)
             current_dir = os.path.dirname(self.current_file)
+            current_ext = os.path.splitext(current_filename)[1].lower()  # 현재 파일 확장자
             
-            # 디버깅: 현재 실행 중인 파일 정보
-            self.progress_update.emit(f"현재 실행 파일: {current_filename}", 72)
+            self.progress_update.emit(f"현재 실행 파일: {current_filename} (확장자: {current_ext})", 71)
             
-            # 가능한 실행 파일 이름들 (대소문자, 하이픈/언더스코어 차이 허용)
+            # 가능한 파일 이름들 (대소문자, 하이픈/언더스코어 차이 허용)
+            base_name = os.path.splitext(current_filename)[0]
             possible_names = [
                 current_filename,
-                current_filename.replace('_', '-'),
-                current_filename.replace('-', '_'),
-                current_filename.lower(),
-                current_filename.lower().replace('_', '-'),
-                current_filename.lower().replace('-', '_')
+                base_name.replace('_', '-') + current_ext,
+                base_name.replace('-', '_') + current_ext,
+                base_name.lower() + current_ext,
+                base_name.lower().replace('_', '-') + current_ext,
+                base_name.lower().replace('-', '_') + current_ext
             ]
             
-            # 디버깅: 검색할 파일명 목록
-            self.progress_update.emit(f"검색할 파일명: {', '.join(possible_names)}", 73)
+            self.progress_update.emit(f"검색할 파일명: {', '.join(possible_names)}", 72)
             
             # 파일 찾기
             main_file_path = None
             
+            # 현재 파일이 .py인지 .exe인지 확인
+            is_python_file = current_ext.lower() == '.py'
+            
             # 재귀적으로 모든 폴더 탐색
             for root, dirs, files in os.walk(extract_dir):
                 for file in files:
-                    # 파일 확장자 확인 (.exe 파일만 처리)
-                    if file.lower().endswith('.exe'):
-                        self.progress_update.emit(f"발견된 EXE 파일: {file}", 74)
+                    file_ext = os.path.splitext(file)[1].lower()
+                    
+                    # 현재와 같은 확장자를 가진 파일만 검색
+                    if file_ext == current_ext:
+                        self.progress_update.emit(f"발견된 {current_ext} 파일: {file}", 73)
                         # 가능한 이름 중 하나와 일치하는지 확인
                         if file in possible_names or file.lower() in possible_names:
                             main_file_path = os.path.join(root, file)
-                            self.progress_update.emit(f"실행 파일을 찾았습니다: {file}", 75)
+                            self.progress_update.emit(f"업데이트 파일을 찾았습니다: {file}", 75)
                             break
                 
                 # 파일을 찾았다면 루프 종료
                 if main_file_path:
                     break
             
-            # 파일을 찾지 못한 경우, 마지막 수단으로 아무 .exe 파일이나 찾기
+            # 파일을 찾지 못한 경우, 마지막 수단으로 같은 확장자의 아무 파일이나 찾기
             if not main_file_path:
-                self.progress_update.emit("정확한 파일명 매치 실패, 대체 파일 검색 중...", 75)
+                self.progress_update.emit(f"정확한 파일명 매치 실패, 대체 {current_ext} 파일 검색 중...", 75)
                 for root, dirs, files in os.walk(extract_dir):
                     for file in files:
-                        if file.lower().endswith('.exe'):
+                        if file.lower().endswith(current_ext):
                             main_file_path = os.path.join(root, file)
-                            self.progress_update.emit(f"대체 실행 파일을 찾았습니다: {file}", 75)
+                            self.progress_update.emit(f"대체 파일을 찾았습니다: {file}", 76)
                             break
                     if main_file_path:
                         break
             
             if not main_file_path:
-                self.progress_update.emit("실행 파일을 찾을 수 없습니다.", 0)
-                self.update_completed.emit(False, f"업데이트 패키지에서 실행 파일을 찾을 수 없습니다.")
+                self.progress_update.emit(f"업데이트 파일을 찾을 수 없습니다.", 0)
+                self.update_completed.emit(False, f"업데이트 패키지에서 {current_ext} 파일을 찾을 수 없습니다.")
                 return
             
-            # 4. 새 버전을 _new 파일로 복사
+            # 4. 업데이트 파일 준비 - 확장자에 따라 다른 처리
             self.progress_update.emit("업데이트 파일 준비 중...", 80)
-            new_file_path = os.path.splitext(self.current_file)[0] + "_new.exe"
             
-            try:
-                shutil.copy2(main_file_path, new_file_path)
-            except Exception as e:
-                self.progress_update.emit(f"업데이트 파일 복사 실패: {str(e)}", 0)
-                self.update_completed.emit(False, f"새 버전 파일을 복사하는 데 실패했습니다: {str(e)}")
-                return
-            
-            # 5. 업데이트 배치 파일 생성
-            batch_path = os.path.join(current_dir, "update.bat")
-            current_filename_no_ext = os.path.splitext(current_filename)[0]
-            
-            try:
-                with open(batch_path, 'w') as batch_file:
-                    batch_file.write('@echo off\n')
-                    batch_file.write('echo Coursemos Downloader 업데이트 중...\n')
-                    batch_file.write('echo 잠시만 기다려주세요...\n\n')
-                    batch_file.write('timeout /t 2 /nobreak > nul\n\n')
-                    batch_file.write(f'if exist "%~dp0{current_filename}.bak" (\n')
-                    batch_file.write(f'    del "%~dp0{current_filename}.bak"\n')
-                    batch_file.write(')\n\n')
-                    batch_file.write(f'if not exist "%~dp0{current_filename_no_ext}_new.exe" (\n')
-                    batch_file.write('    echo 업데이트 파일을 찾을 수 없습니다.\n')
-                    batch_file.write('    goto :error\n')
-                    batch_file.write(')\n\n')
-                    batch_file.write(f'ren "%~dp0{current_filename}" "{current_filename}.bak"\n')
-                    batch_file.write('if errorlevel 1 goto :error\n\n')
-                    batch_file.write(f'ren "%~dp0{current_filename_no_ext}_new.exe" "{current_filename}"\n')
-                    batch_file.write('if errorlevel 1 goto :error\n\n')
-                    batch_file.write('echo 업데이트가 성공적으로 완료되었습니다!\n')
-                    batch_file.write('echo 프로그램을 다시 시작합니다...\n\n')
-                    batch_file.write(f'start "" "%~dp0{current_filename}"\n')
-                    batch_file.write('goto :end\n\n')
-                    batch_file.write(':error\n')
-                    batch_file.write('echo 업데이트 중 오류가 발생했습니다.\n')
-                    batch_file.write('echo 관리자에게 문의하세요.\n')
-                    batch_file.write('pause\n\n')
-                    batch_file.write(':end\n')
-                    batch_file.write('exit\n')
-            except Exception as e:
-                self.progress_update.emit(f"업데이트 스크립트 생성 실패: {str(e)}", 0)
-                self.update_completed.emit(False, f"업데이트 스크립트 생성에 실패했습니다: {str(e)}")
-                return
+            if is_python_file:
+                # Python 파일인 경우 - 바로 덮어쓰기 방식
+                update_method = "즉시 업데이트 (Python 스크립트)"
+                
+                # 백업 파일 생성
+                backup_file = self.current_file + ".bak"
+                if os.path.exists(backup_file):
+                    os.remove(backup_file)
+                
+                # 현재 파일 백업
+                try:
+                    shutil.copy2(self.current_file, backup_file)
+                    self.progress_update.emit("현재 스크립트 백업 완료", 85)
+                except Exception as e:
+                    self.progress_update.emit(f"백업 생성 실패: {str(e)}", 0)
+                    self.update_completed.emit(False, f"백업 파일 생성에 실패했습니다: {str(e)}")
+                    return
+                
+                # 새 파일 복사 준비
+                try:
+                    # 현재 파일을 업데이트 파일로 덮어쓰기
+                    with open(main_file_path, 'r', encoding='utf-8') as src:
+                        new_content = src.read()
+                    
+                    with open(self.current_file, 'w', encoding='utf-8') as dest:
+                        dest.write(new_content)
+                    
+                    self.progress_update.emit("Python 스크립트 업데이트 완료", 90)
+                    
+                    # 업데이트 완료 - 성공 메시지 전송
+                    self.progress_update.emit("업데이트 완료", 100)
+                    self.update_completed.emit(True, 
+                        f"Python 스크립트가 성공적으로 업데이트되었습니다.\n"
+                        f"변경 사항을 적용하려면 프로그램을 재시작하세요."
+                    )
+                except Exception as e:
+                    self.progress_update.emit(f"스크립트 업데이트 실패: {str(e)}", 0)
+                    self.update_completed.emit(False, f"스크립트 업데이트에 실패했습니다: {str(e)}")
+                    return
+                
+            else:
+                # EXE 파일인 경우 - 기존 방식대로 진행
+                update_method = "2단계 업데이트 (EXE 파일)"
+                new_file_path = os.path.splitext(self.current_file)[0] + "_new.exe"
+                
+                try:
+                    shutil.copy2(main_file_path, new_file_path)
+                except Exception as e:
+                    self.progress_update.emit(f"업데이트 파일 복사 실패: {str(e)}", 0)
+                    self.update_completed.emit(False, f"새 버전 파일을 복사하는 데 실패했습니다: {str(e)}")
+                    return
+                
+                # 5. 업데이트 배치 파일 생성
+                batch_path = os.path.join(current_dir, "update.bat")
+                current_filename_no_ext = os.path.splitext(current_filename)[0]
+                
+                try:
+                    with open(batch_path, 'w') as batch_file:
+                        batch_file.write('@echo off\n')
+                        batch_file.write('echo Coursemos Downloader 업데이트 중...\n')
+                        batch_file.write('echo 잠시만 기다려주세요...\n\n')
+                        batch_file.write('timeout /t 2 /nobreak > nul\n\n')
+                        batch_file.write(f'if exist "%~dp0{current_filename}.bak" (\n')
+                        batch_file.write(f'    del "%~dp0{current_filename}.bak"\n')
+                        batch_file.write(')\n\n')
+                        batch_file.write(f'if not exist "%~dp0{current_filename_no_ext}_new.exe" (\n')
+                        batch_file.write('    echo 업데이트 파일을 찾을 수 없습니다.\n')
+                        batch_file.write('    goto :error\n')
+                        batch_file.write(')\n\n')
+                        batch_file.write(f'ren "%~dp0{current_filename}" "{current_filename}.bak"\n')
+                        batch_file.write('if errorlevel 1 goto :error\n\n')
+                        batch_file.write(f'ren "%~dp0{current_filename_no_ext}_new.exe" "{current_filename}"\n')
+                        batch_file.write('if errorlevel 1 goto :error\n\n')
+                        batch_file.write('echo 업데이트가 성공적으로 완료되었습니다!\n')
+                        batch_file.write('echo 프로그램을 다시 시작합니다...\n\n')
+                        batch_file.write(f'start "" "%~dp0{current_filename}"\n')
+                        batch_file.write('goto :end\n\n')
+                        batch_file.write(':error\n')
+                        batch_file.write('echo 업데이트 중 오류가 발생했습니다.\n')
+                        batch_file.write('echo 관리자에게 문의하세요.\n')
+                        batch_file.write('pause\n\n')
+                        batch_file.write(':end\n')
+                        batch_file.write('exit\n')
+                except Exception as e:
+                    self.progress_update.emit(f"업데이트 스크립트 생성 실패: {str(e)}", 0)
+                    self.update_completed.emit(False, f"업데이트 스크립트 생성에 실패했습니다: {str(e)}")
+                    return
+                
+                # 7. 업데이트 완료 - 성공 메시지 전송
+                self.progress_update.emit("업데이트 파일 준비 완료", 100)
+                self.update_completed.emit(True, f"업데이트 파일이 준비되었습니다. 프로그램 종료 후 업데이트를 완료합니다.")
             
             # 6. 임시 파일 정리
             try:
@@ -368,13 +421,10 @@ class DirectUpdater(QThread):
             except:
                 pass  # 임시 파일 삭제 실패는 무시
             
-            # 7. 업데이트 완료 - 성공 메시지 전송
-            self.progress_update.emit("업데이트 파일 준비 완료", 100)
-            self.update_completed.emit(True, f"업데이트 파일이 준비되었습니다. 프로그램 종료 후 업데이트를 완료합니다.")
-            
         except Exception as e:
             self.progress_update.emit(f"업데이트 오류: {str(e)}", 0)
             self.update_completed.emit(False, f"업데이트 중 오류가 발생했습니다: {str(e)}")
+
 
 def format_time(seconds):
     """초 단위 시간을 시:분:초 형식으로 변환"""
@@ -575,23 +625,43 @@ class GitHubUpdaterManager:
     def on_update_completed(self, success, message):
         """업데이트 완료 처리"""
         if success:
-            result = QMessageBox.information(
-                self.parent,
-                "업데이트 준비 완료",
-                f"{message}\n\n지금 프로그램을 종료하고 업데이트를 진행하시겠습니까?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes
-            )
+            # 메시지에 "Python 스크립트" 단어가 포함되어 있는지 확인
+            is_python_update = "Python 스크립트" in message
+        
+            if is_python_update:
+                # Python 스크립트 업데이트의 경우 즉시 재시작 옵션 제공
+                result = QMessageBox.information(
+                    self.parent,
+                    "업데이트 완료",
+                    f"{message}\n\n지금 프로그램을 재시작하시겠습니까?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
             
-            if result == QMessageBox.Yes:
-                # 현재 디렉토리의 update.bat 실행 후 프로그램 종료
-                update_bat = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "update.bat")
-                if os.path.exists(update_bat):
-                    subprocess.Popen([update_bat], shell=True)
-                    QApplication.quit()  # 프로그램 종료
+                if result == QMessageBox.Yes:
+                    # 현재 파일 경로
+                    script_path = os.path.abspath(sys.argv[0])
+                    # Python 인터프리터로 스크립트 재실행
+                    subprocess.Popen([sys.executable, script_path])
+                    QApplication.quit()  # 현재 인스턴스 종료
+            else:
+                # EXE 파일 업데이트의 경우 배치 스크립트 실행
+                result = QMessageBox.information(
+                    self.parent,
+                    "업데이트 준비 완료",
+                    f"{message}\n\n지금 프로그램을 종료하고 업데이트를 진행하시겠습니까?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+            
+                if result == QMessageBox.Yes:
+                    # 현재 디렉토리의 update.bat 실행 후 프로그램 종료
+                    update_bat = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "update.bat")
+                    if os.path.exists(update_bat):
+                        subprocess.Popen([update_bat], shell=True)
+                        QApplication.quit()  # 프로그램 종료
         else:
             QMessageBox.warning(self.parent, "업데이트 실패", message)
-
 
 class CoursemosDownloader(QMainWindow):
     """Coursemos 다운로더 메인 윈도우"""
