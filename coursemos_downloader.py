@@ -21,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
 
@@ -322,12 +322,7 @@ class GitHubUpdaterManager:
     
     def on_update_available(self, new_version, download_url, release_notes, silent):
         """새 업데이트가 있을 때 호출"""
-        if silent:
-            # 백그라운드 확인 시 알림만 표시
-            self.parent.show_update_notification(new_version)
-            return
-            
-        # 사용자에게 업데이트 물어보기
+        # silent 파라미터를 무시하고 항상 업데이트 대화상자 표시
         detail_text = f"변경 사항:\n\n{release_notes}" if release_notes else ""
         
         msg_box = QMessageBox(self.parent)
@@ -455,7 +450,7 @@ class CoursemosDownloader(QMainWindow):
         self.updater_manager = GitHubUpdaterManager(self)
         
         # 앱 시작 시 자동 업데이트 확인
-        QTimer.singleShot(1000, lambda: self.updater_manager.check_for_updates(silent=True))
+        QTimer.singleShot(1000, lambda: self.updater_manager.check_for_updates())
         
     def init_ui(self):
         # 메인 윈도우 설정
@@ -533,11 +528,6 @@ class CoursemosDownloader(QMainWindow):
         
         left_layout.addSpacing(20)
         left_layout.addLayout(save_layout)
-        
-        # 업데이트 확인 버튼
-        self.check_update_btn = QPushButton("Check for Updates")
-        self.check_update_btn.clicked.connect(self.check_for_updates)
-        left_layout.addWidget(self.check_update_btn)
         
         # 좌측 패널에 빈 공간 추가
         left_layout.addStretch()
@@ -799,14 +789,9 @@ class CoursemosDownloader(QMainWindow):
             # 하나의 형식만 선택되어 있고 완료된 경우
             QMessageBox.information(self, "완료", f"{current_format} 다운로드가 완료되었습니다.")
     
-    def check_for_updates(self):
-        """사용자가 요청한 업데이트 확인"""
-        self.status_text.append("GitHub에서 업데이트를 확인하는 중...")
-        self.updater_manager.check_for_updates(silent=False)
-    
     def show_update_notification(self, new_version):
         """새 버전 알림 표시"""
-        self.status_text.append(f"새 버전({new_version})이 있습니다. 업데이트하려면 'Check for Updates' 버튼을 클릭하세요.")
+        self.status_text.append(f"새 버전({new_version})이 있습니다.")
     
     def show_update_progress(self, message, percent):
         """업데이트 진행 상황 표시"""
