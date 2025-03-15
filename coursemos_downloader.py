@@ -6,6 +6,7 @@ import requests
 import tempfile
 import zipfile
 import shutil
+import atexit
 from bs4 import BeautifulSoup
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QFileDialog, 
                            QLabel, QVBoxLayout, QHBoxLayout, QWidget, QProgressBar, 
@@ -21,9 +22,122 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
+
+
+class FFmpegManager:
+    """ffmpeg 바이너리 관리 클래스"""
+    
+    def __init__(self):
+        self.ffmpeg_path = None
+        self.ffprobe_path = None
+        self.temp_dir = None
+        self.initialize()
+        
+    def initialize(self):
+        """ffmpeg 및 ffprobe 경로 초기화"""
+        # 1. 먼저 시스템 PATH에 ffmpeg가 있는지 확인
+        try:
+            subprocess.run(['ffmpeg', '-version'], 
+                          stdout=subprocess.PIPE, 
+                          stderr=subprocess.PIPE, 
+                          check=True)
+            subprocess.run(['ffprobe', '-version'], 
+                          stdout=subprocess.PIPE, 
+                          stderr=subprocess.PIPE, 
+                          check=True)
+            # 시스템에 설치된 ffmpeg를 사용
+            self.ffmpeg_path = 'ffmpeg'
+            self.ffprobe_path = 'ffprobe'
+            return
+        except (subprocess.SubprocessError, FileNotFoundError):
+            # 시스템 PATH에 없는 경우, 내장된 ffmpeg 사용 시도
+            pass
+        
+        # 2. 패키징된 앱 내부에서 ffmpeg 찾기
+        try:
+            base_path = self._get_base_path()
+            
+            # 번들에 포함된 경로 시도
+            possible_locations = [
+                # 루트 디렉토리
+                base_path,
+                # bin 폴더 내부
+                os.path.join(base_path, "bin"),
+                # 상대 경로
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
+            ]
+            
+            ffmpeg_found = False
+            for location in possible_locations:
+                ffmpeg_exe = os.path.join(location, "ffmpeg.exe")
+                ffprobe_exe = os.path.join(location, "ffprobe.exe")
+                
+                if os.path.exists(ffmpeg_exe) and os.path.exists(ffprobe_exe):
+                    self.ffmpeg_path = ffmpeg_exe
+                    self.ffprobe_path = ffprobe_exe
+                    ffmpeg_found = True
+                    break
+            
+            # 3. 내장된 파일을 임시 디렉토리에 추출
+            if not ffmpeg_found:
+                self._extract_binaries()
+        except Exception as e:
+            print(f"ffmpeg 초기화 오류: {str(e)}")
+    
+    def _get_base_path(self):
+        """애플리케이션 기본 경로 가져오기"""
+        try:
+            # PyInstaller 번들의 경우
+            base_path = sys._MEIPASS
+        except Exception:
+            # 일반 Python 스크립트의 경우
+            base_path = os.path.abspath(".")
+        return base_path
+    
+    def _extract_binaries(self):
+        """내장된 바이너리를 임시 디렉토리에 추출"""
+        try:
+            # 임시 디렉토리 생성
+            self.temp_dir = tempfile.mkdtemp()
+            atexit.register(self._cleanup_temp_dir)  # 앱 종료 시 임시 디렉토리 삭제
+            
+            base_path = self._get_base_path()
+            
+            # ffmpeg.exe와 ffprobe.exe를 리소스에서 임시 디렉토리로 복사
+            ffmpeg_resource = os.path.join(base_path, "ffmpeg.exe")
+            ffprobe_resource = os.path.join(base_path, "ffprobe.exe")
+            
+            if os.path.exists(ffmpeg_resource) and os.path.exists(ffprobe_resource):
+                ffmpeg_temp = os.path.join(self.temp_dir, "ffmpeg.exe")
+                ffprobe_temp = os.path.join(self.temp_dir, "ffprobe.exe")
+                
+                shutil.copy2(ffmpeg_resource, ffmpeg_temp)
+                shutil.copy2(ffprobe_resource, ffprobe_temp)
+                
+                self.ffmpeg_path = ffmpeg_temp
+                self.ffprobe_path = ffprobe_temp
+            
+        except Exception as e:
+            print(f"ffmpeg 바이너리 추출 오류: {str(e)}")
+    
+    def _cleanup_temp_dir(self):
+        """임시 디렉토리 정리"""
+        if self.temp_dir and os.path.exists(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir)
+            except:
+                pass
+    
+    def get_ffmpeg_command(self):
+        """ffmpeg 명령 경로 반환"""
+        return self.ffmpeg_path if self.ffmpeg_path else "ffmpeg"
+    
+    def get_ffprobe_command(self):
+        """ffprobe 명령 경로 반환"""
+        return self.ffprobe_path if self.ffprobe_path else "ffprobe"
 
 
 class GitHubUpdateChecker(QThread):
@@ -71,6 +185,7 @@ class GitHubUpdateChecker(QThread):
         
         except Exception as e:
             print(f"업데이트 확인 오류: {str(e)}")
+
 
 class DirectUpdater(QThread):
     """기존 파일을 직접 업데이트하는 스레드"""
@@ -207,12 +322,13 @@ class FFmpegThread(QThread):
     progress_percent = pyqtSignal(int)  # 백분율 진행 상황
     conversion_finished = pyqtSignal(bool, str, str)  # 성공여부, 메시지, 파일경로
     
-    def __init__(self, m3u8_url, output_path, output_format):
+    def __init__(self, m3u8_url, output_path, output_format, ffmpeg_manager):
         super().__init__()
         self.m3u8_url = m3u8_url
         self.output_path = output_path
         self.output_format = output_format
         self.duration_ms = None  # 총 재생 시간 (밀리초)
+        self.ffmpeg_manager = ffmpeg_manager
         
     def run(self):
         try:
@@ -220,10 +336,12 @@ class FFmpegThread(QThread):
             self.get_duration()
             
             # 출력 형식에 따른 명령어 설정
+            ffmpeg_cmd = self.ffmpeg_manager.get_ffmpeg_command()
+            
             if self.output_format == 'mp3':
                 # MP3로 변환할 때는 오디오만 추출
                 command = [
-                    'ffmpeg',
+                    ffmpeg_cmd,
                     '-i', self.m3u8_url,
                     '-b:a', '192k',  # 기본 비트레이트
                     '-codec:a', 'libmp3lame',  # MP3 인코더 사용
@@ -232,7 +350,7 @@ class FFmpegThread(QThread):
             else:
                 # MP4로 변환 (기본 방식)
                 command = [
-                    'ffmpeg',
+                    ffmpeg_cmd,
                     '-i', self.m3u8_url,
                     '-c', 'copy',  # 코덱 복사
                     '-bsf:a', 'aac_adtstoasc',  # AAC 필터
@@ -284,7 +402,9 @@ class FFmpegThread(QThread):
     def get_duration(self):
         """미디어 파일의 총 재생 시간을 가져옵니다."""
         try:
-            command = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
+            ffprobe_cmd = self.ffmpeg_manager.get_ffprobe_command()
+            
+            command = [ffprobe_cmd, '-v', 'error', '-show_entries', 'format=duration', 
                       '-of', 'default=noprint_wrappers=1:nokey=1', self.m3u8_url]
             
             result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace')
@@ -401,37 +521,6 @@ class GitHubUpdaterManager:
         else:
             QMessageBox.warning(self.parent, "업데이트 실패", message)
 
-def on_update_completed(self, success, message):
-    """업데이트 완료 또는 실패 처리"""
-    if success:
-        QMessageBox.information(
-            self.parent, 
-            "업데이트", 
-            message + "\n\n프로그램이 잠시 후 종료되고 업데이트된 버전이 자동으로 실행됩니다."
-        )
-    else:
-        QMessageBox.warning(self.parent, "업데이트 실패", message)
-        self.parent.progress_bar.setVisible(False)
-    
-    def download_and_install_update(self, download_url):
-        """업데이트 다운로드 및 설치"""
-        app_path = os.path.abspath(sys.argv[0])
-        
-        self.updater = GitHubUpdater(download_url, app_path)
-        self.updater.update_progress.connect(self.parent.show_update_progress)
-        self.updater.update_completed.connect(self.on_update_completed)
-        self.updater.start()
-        
-        self.parent.status_text.append("업데이트 다운로드 중...")
-    
-    def on_update_completed(self, success, message):
-        """업데이트 완료 또는 실패 처리"""
-        if success:
-            QMessageBox.information(self.parent, "업데이트", message)
-        else:
-            QMessageBox.warning(self.parent, "업데이트 실패", message)
-            self.parent.progress_bar.setVisible(False)
-
 
 class CoursemosDownloader(QMainWindow):
     """Coursemos 다운로더 메인 윈도우"""
@@ -444,11 +533,16 @@ class CoursemosDownloader(QMainWindow):
         self.save_folder = os.path.expanduser("~/Downloads")  # 기본 다운로드 폴더
         self.settings = QSettings("CoursemosDownloader", "Settings")
         self.load_settings()
+        
+        # ffmpeg 관리자 초기화
+        self.ffmpeg_manager = FFmpegManager()
+        
+        # 로고 설정
         icon_path = self.resource_path("logo.png")  # 로고 파일 경로
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
+        
         self.init_ui()
-
         
         # 업데이트 관리자 초기화
         self.updater_manager = GitHubUpdaterManager(self)
@@ -467,8 +561,7 @@ class CoursemosDownloader(QMainWindow):
             base_path = os.path.abspath(".")
         
         return os.path.join(base_path, relative_path)
-    
-
+        
     def init_ui(self):
         # 메인 윈도우 설정
         self.setWindowTitle(f'Coursemos Downloader v{APP_VERSION}')
@@ -482,7 +575,18 @@ class CoursemosDownloader(QMainWindow):
         left_panel.setFrameShape(QFrame.StyledPanel)
         left_layout = QVBoxLayout(left_panel)
         left_panel.setStyleSheet("background-color: #f0f0f0;")
-
+        
+        # 로고 추가
+        logo_label = QLabel()
+        logo_path = self.resource_path("logo.png")  # 로고 파일 경로
+        if os.path.exists(logo_path):
+            logo_pixmap = QPixmap(logo_path)
+            # 로고 크기 조정 (너비 150px에 맞추고 비율 유지)
+            logo_pixmap = logo_pixmap.scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_label.setPixmap(logo_pixmap)
+            logo_label.setAlignment(Qt.AlignCenter)
+            left_layout.addWidget(logo_label)
+            left_layout.addSpacing(10)  # 로고와 타이틀 사이 간격
         
         # 타이틀
         title_label = QLabel("Coursemos Downloader")
@@ -721,18 +825,12 @@ class CoursemosDownloader(QMainWindow):
             QMessageBox.warning(self, "경고", "변환할 URL이 선택되지 않았습니다.")
             return
             
-        # ffmpeg 확인
-        try:
-            subprocess.run(['ffmpeg', '-version'], 
-                          stdout=subprocess.PIPE, 
-                          stderr=subprocess.PIPE, 
-                          check=True)
-        except (subprocess.SubprocessError, FileNotFoundError):
+        # 내장된 ffmpeg 사용
+        if not self.ffmpeg_manager.ffmpeg_path:
             QMessageBox.critical(
                 self, 
                 "오류", 
-                "ffmpeg가 설치되어 있지 않거나 실행할 수 없습니다. "
-                "ffmpeg를 설치하고 시스템 경로에 추가해주세요."
+                "ffmpeg를 찾을 수 없습니다. 프로그램 설치에 문제가 있을 수 있습니다."
             )
             return
         
@@ -758,8 +856,8 @@ class CoursemosDownloader(QMainWindow):
         self.progress_bar.setValue(0)
         self.download_btn.setEnabled(False)
         
-        # 변환 스레드 시작
-        self.ffmpeg_thread = FFmpegThread(self.selected_url, output_path, format_type)
+        # 변환 스레드 시작 (ffmpeg_manager 추가)
+        self.ffmpeg_thread = FFmpegThread(self.selected_url, output_path, format_type, self.ffmpeg_manager)
         self.ffmpeg_thread.progress_update.connect(self.update_progress)
         self.ffmpeg_thread.progress_percent.connect(self.update_progress_bar)
         self.ffmpeg_thread.conversion_finished.connect(self.conversion_completed)
