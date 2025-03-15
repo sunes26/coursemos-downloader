@@ -21,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.13"
+APP_VERSION = "1.0.14"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
 
@@ -444,6 +444,9 @@ class CoursemosDownloader(QMainWindow):
         self.save_folder = os.path.expanduser("~/Downloads")  # 기본 다운로드 폴더
         self.settings = QSettings("CoursemosDownloader", "Settings")
         self.load_settings()
+        icon_path = self.resource_path("logo.png")  # 로고 파일 경로
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.init_ui()
         
         # 업데이트 관리자 초기화
@@ -465,6 +468,17 @@ class CoursemosDownloader(QMainWindow):
         left_panel.setFrameShape(QFrame.StyledPanel)
         left_layout = QVBoxLayout(left_panel)
         left_panel.setStyleSheet("background-color: #f0f0f0;")
+        # 로고 추가
+        logo_label = QLabel()
+        logo_path = self.resource_path("logo.png")  # 로고 파일 경로
+        if os.path.exists(logo_path):
+            logo_pixmap = QPixmap(logo_path)
+            # 로고 크기 조정 (너비 150px에 맞추고 비율 유지)
+            logo_pixmap = logo_pixmap.scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_label.setPixmap(logo_pixmap)
+            logo_label.setAlignment(Qt.AlignCenter)
+            left_layout.addWidget(logo_label)
+            left_layout.addSpacing(10)  # 로고와 타이틀 사이 간격
         
         # 타이틀
         title_label = QLabel("Coursemos Downloader")
