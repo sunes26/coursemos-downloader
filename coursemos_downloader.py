@@ -21,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
 
@@ -72,414 +72,119 @@ class GitHubUpdateChecker(QThread):
         except Exception as e:
             print(f"업데이트 확인 오류: {str(e)}")
 
-
-
-class GitHubDownloader(QThread):
-    """GitHub 릴리스에서 업데이트 다운로드를 위한 스레드"""
-    progress_update = pyqtSignal(str, int)  # 메시지, 진행률(%)
-    download_completed = pyqtSignal(bool, str, str)  # 성공여부, 메시지, 다운로드 경로
+class DirectUpdater(QThread):
+    """기존 파일을 직접 업데이트하는 스레드"""
+    progress_update = pyqtSignal(str, int)  # 메시지, 진행률
+    update_completed = pyqtSignal(bool, str)  # 성공 여부, 메시지
     
-    def __init__(self, download_url, version):
+    def __init__(self, download_url, current_file):
         super().__init__()
         self.download_url = download_url
-        self.version = version
-        
-    def run(self):
-        try:
-            # 다운로드 폴더 경로
-            download_folder = os.path.expanduser("~/Downloads")
-            if not os.path.exists(download_folder):
-                download_folder = tempfile.gettempdir()
-            
-            # 임시 파일 생성
-            temp_file = os.path.join(download_folder, f"coursemos_downloader_v{self.version}.zip")
-            
-            self.progress_update.emit("업데이트 다운로드 중...", 10)
-            
-            # 릴리스 파일 다운로드
-            response = requests.get(self.download_url, stream=True)
-            total_size = int(response.headers.get('content-length', 0))
-            
-            with open(temp_file, 'wb') as f:
-                downloaded = 0
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        percent = int(downloaded / total_size * 100) if total_size > 0 else 0
-                        self.progress_update.emit(f"다운로드 중... {percent}%", 10 + percent // 2)
-            
-            self.progress_update.emit("업데이트 파일 다운로드 완료", 100)
-            self.download_completed.emit(True, "새 버전 다운로드 완료", temp_file)
-            
-        except Exception as e:
-            self.download_completed.emit(False, f"다운로드 오류: {str(e)}", "")
-
-
-
-
-class GitHubUpdater(QThread):
-    """GitHub 릴리스에서 업데이트 다운로드 및 설치를 위한 스레드"""
-    update_progress = pyqtSignal(str, int)  # 메시지, 진행률(%)
-    update_completed = pyqtSignal(bool, str)
+        self.current_file = current_file  # 현재 실행 중인 파일 경로
     
-    def __init__(self, download_url, app_path):
-        super().__init__()
-        self.download_url = download_url
-        self.app_path = app_path
-        
     def run(self):
         try:
-            # 현재 실행 중인 프로세스 ID 가져오기 (구버전 종료용)
-            current_pid = os.getpid()
+            self.progress_update.emit("업데이트 시작...", 0)
             
-            # 임시 디렉토리 생성
+            # 임시 폴더 생성
             temp_dir = tempfile.mkdtemp()
-            temp_file = os.path.join(temp_dir, "update.zip")
+            temp_zip = os.path.join(temp_dir, "update.zip")
             
-            self.update_progress.emit("업데이트 다운로드 중...", 10)
-            
-            # 릴리스 파일 다운로드
+            # 1. 업데이트 파일 다운로드
+            self.progress_update.emit("업데이트 다운로드 중...", 10)
             response = requests.get(self.download_url, stream=True)
             total_size = int(response.headers.get('content-length', 0))
             
-            with open(temp_file, 'wb') as f:
+            with open(temp_zip, 'wb') as f:
                 downloaded = 0
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
-                        percent = int(downloaded / total_size * 100) if total_size > 0 else 0
-                        self.update_progress.emit(f"다운로드 중... {percent}%", 10 + percent // 2)
+                        if total_size > 0:
+                            percent = int(downloaded / total_size * 100)
+                            self.progress_update.emit(f"다운로드 중... {percent}%", 10 + percent // 2)
             
-            self.update_progress.emit("압축 파일 해제 중...", 60)
-            
-            # 압축 해제 디렉토리
+            # 2. ZIP 파일 압축 해제
+            self.progress_update.emit("ZIP 파일 압축 해제 중...", 60)
             extract_dir = os.path.join(temp_dir, "extracted")
             os.makedirs(extract_dir, exist_ok=True)
             
-            # ZIP 파일 압축 해제
-            with zipfile.ZipFile(temp_file, 'r') as zip_ref:
+            with zipfile.ZipFile(temp_zip, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             
-            self.update_progress.emit("최신 소스 파일 찾는 중...", 70)
+            # 3. 메인 파일 찾기
+            self.progress_update.emit("업데이트 파일 찾는 중...", 70)
             
-            # 앱 경로 결정
-            if getattr(sys, 'frozen', False):
-                app_dir = os.path.dirname(sys.executable)
-                is_exe = True
-            else:
-                app_dir = os.path.dirname(os.path.abspath(__file__))
-                is_exe = False
+            # 현재 파일 이름과 경로
+            current_filename = os.path.basename(self.current_file)
+            current_dir = os.path.dirname(self.current_file)
             
-            # GitHub에서 받은 ZIP 파일 내부 구조 분석 및 처리
-            self.update_progress.emit("GitHub 저장소 구조 분석 중...", 75)
+            # GitHub 압축 파일 구조 확인 (최상위 폴더 찾기)
+            extracted_items = os.listdir(extract_dir)
+            source_dir = extract_dir
             
-            # 모든 디렉토리 탐색하여 필요한 파일 찾기
-            github_repo_dir = None
-            py_files_found = []
+            # GitHub 구조: 보통 하나의 최상위 폴더가 있음
+            if len(extracted_items) == 1 and os.path.isdir(os.path.join(extract_dir, extracted_items[0])):
+                source_dir = os.path.join(extract_dir, extracted_items[0])
             
-            # 재귀적으로 모든 .py 파일을 찾는 함수
-            def find_py_files(directory, file_list):
-                for item in os.listdir(directory):
-                    item_path = os.path.join(directory, item)
-                    if os.path.isdir(item_path):
-                        find_py_files(item_path, file_list)
-                    elif item.endswith('.py'):
-                        file_list.append(item_path)
-            
-            # 추출된 디렉토리에서 .py 파일 찾기
-            find_py_files(extract_dir, py_files_found)
-            
-            if not py_files_found:
-                self.update_completed.emit(False, "업데이트 파일에 필요한 Python 파일을 찾을 수 없습니다.")
-                return
-                
-            # coursemos_downloader.py 파일 찾기
+            # 메인 파일 찾기
             main_file_path = None
-            for py_file in py_files_found:
-                if os.path.basename(py_file) == "coursemos_downloader.py":
-                    main_file_path = py_file
-                    github_repo_dir = os.path.dirname(py_file)
+            for root, dirs, files in os.walk(source_dir):
+                for file in files:
+                    if file == current_filename:
+                        main_file_path = os.path.join(root, file)
+                        break
+                if main_file_path:
                     break
-                    
-            if not main_file_path:
-                self.update_completed.emit(False, "coursemos_downloader.py 파일을 찾을 수 없습니다.")
-                return
-                
-            self.update_progress.emit(f"소스 파일 발견: {main_file_path}", 80)
             
-            # 윈도우용 업데이트 스크립트 작성
-            if sys.platform.startswith('win'):
-                batch_file = os.path.join(temp_dir, "update.bat")
-                with open(batch_file, 'w') as f:
-                    f.write('@echo off\n')
-                    f.write('echo Coursemos Downloader 업데이트 중...\n')
-                    
-                    # 구버전 프로그램 종료 (PID 기반)
-                    f.write(f'echo 현재 실행 중인 프로그램 종료 중 (PID: {current_pid})...\n')
-                    f.write(f'taskkill /F /PID {current_pid} /T > nul 2>&1\n')
-                    f.write('timeout /t 2 /nobreak > nul\n')  # 2초 대기
-                    
-                    # 자세한 로그를 위한 설정
-                    f.write('echo 현재 작업 디렉토리: %CD%\n')
-                    f.write('echo 앱 디렉토리: "' + app_dir + '"\n')
-                    f.write('echo GitHub 저장소 디렉토리: "' + github_repo_dir + '"\n')
-                    f.write('echo 메인 파일 경로: "' + main_file_path + '"\n')
-                    
-                    # 파일 복사 전 디렉토리 준비 상태 확인
-                    f.write(f'echo 앱 디렉토리로 이동 중...\n')
-                    f.write(f'cd /d "{app_dir}" || (\n')
-                    f.write(f'  echo 앱 디렉토리로 이동할 수 없습니다: {app_dir}\n')
-                    f.write(f'  goto error\n')
-                    f.write(f')\n')
-                    
-                    # 백업
-                    f.write('echo 원본 파일 백업 중...\n')
-                    if is_exe:
-                        f.write(f'if exist coursemos_downloader.exe.bak del /f /q coursemos_downloader.exe.bak\n')
-                        f.write(f'if exist coursemos_downloader.exe rename coursemos_downloader.exe coursemos_downloader.exe.bak\n')
+            if not main_file_path:
+                self.progress_update.emit(f"{current_filename} 파일을 찾을 수 없습니다.", 0)
+                self.update_completed.emit(False, f"업데이트 패키지에서 {current_filename} 파일을 찾을 수 없습니다.")
+                return
+            
+            # 4. 파일 백업
+            self.progress_update.emit("현재 파일 백업 중...", 80)
+            backup_file = self.current_file + ".bak"
+            
+            # 이미 백업 파일이 있다면 삭제
+            if os.path.exists(backup_file):
+                os.remove(backup_file)
+            
+            # 현재 파일 백업
+            shutil.copy2(self.current_file, backup_file)
+            
+            # 5. 새 파일 복사 - 재시도 로직 포함
+            self.progress_update.emit("파일 업데이트 중...", 90)
+            
+            max_retries = 5
+            for attempt in range(max_retries):
+                try:
+                    # 기존 파일 덮어쓰기
+                    shutil.copy2(main_file_path, self.current_file)
+                    break
+                except PermissionError:
+                    if attempt < max_retries - 1:
+                        self.progress_update.emit(f"권한 오류, 재시도 중... ({attempt+1}/{max_retries})", 90)
+                        time.sleep(1)  # 잠시 대기 후 재시도
                     else:
-                        f.write(f'if exist coursemos_downloader.py.bak del /f /q coursemos_downloader.py.bak\n')
-                        f.write(f'if exist coursemos_downloader.py (\n')
-                        f.write(f'  echo 백업 파일 생성: coursemos_downloader.py.bak\n')
-                        f.write(f'  rename coursemos_downloader.py coursemos_downloader.py.bak\n')
-                        f.write(f')\n')
-                    
-                    # 메인 파일이 존재하는지 확인
-                    f.write(f'echo 소스 파일 확인 중...\n')
-                    f.write(f'if not exist "{main_file_path}" (\n')
-                    f.write(f'  echo 오류: 메인 파일을 찾을 수 없습니다: {main_file_path}\n')
-                    f.write(f'  goto error\n')
-                    f.write(f')\n')
-                    
-                    # 단일 파일 복사 옵션 (xcopy 대신 개별 파일 복사)
-                    f.write('echo 개별 파일 복사 중...\n')
-                    
-                    # 메인 파일 복사
-                    f.write(f'echo coursemos_downloader.py 복사 중...\n')
-                    f.write(f'copy /y "{main_file_path}" "{app_dir}\\coursemos_downloader.py" || (\n')
-                    f.write(f'  echo coursemos_downloader.py 파일 복사 실패\n')
-                    f.write(f'  goto error\n')
-                    f.write(f')\n')
-                    
-                    # 추가 파일이 있는지 확인하고 복사 (README.md 등)
-                    f.write(f'echo 추가 파일 복사 중...\n')
-                    readme_path = os.path.join(github_repo_dir, "README.md")
-                    if os.path.exists(readme_path):
-                        f.write(f'echo README.md 복사 중...\n')
-                        f.write(f'copy /y "{readme_path}" "{app_dir}\\README.md" || echo README.md 복사 실패 (무시됨)\n')
-                    
-                    # 다른 필요한 .py 파일이 있는지 확인하고 복사
-                    for py_file in py_files_found:
-                        if py_file != main_file_path:
-                            filename = os.path.basename(py_file)
-                            f.write(f'echo {filename} 복사 중...\n')
-                            f.write(f'copy /y "{py_file}" "{app_dir}\\{filename}" || echo {filename} 복사 실패 (무시됨)\n')
-                    
-                    f.write('echo 파일 복사 완료!\n')
-                    
-                    # 성공적인 복사 후
-                    f.write('echo 업데이트 성공적으로 완료!\n')
-                    
-                    # 앱 재시작
-                    if is_exe:
-                        f.write(f'start "" "{app_dir}\\coursemos_downloader.exe"\n')
-                    else:
-                        f.write(f'start "" python "{app_dir}\\coursemos_downloader.py"\n')
-                    
-                    f.write('goto cleanup\n')
-                    
-                    # 오류 처리 섹션
-                    f.write(':error\n')
-                    f.write('echo [오류] 업데이트 중 문제가 발생했습니다!\n')
-                    f.write('echo 원본 파일 복원 중...\n')
-                    
-                    # 백업 파일이 있으면 복원
-                    if is_exe:
-                        f.write('if exist coursemos_downloader.exe.bak (\n')
-                        f.write('  echo 백업에서 복원 중: coursemos_downloader.exe\n')
-                        f.write('  rename coursemos_downloader.exe.bak coursemos_downloader.exe\n')
-                        f.write(')\n')
-                        f.write('start "" "' + app_dir + '\\coursemos_downloader.exe"\n')
-                    else:
-                        f.write('if exist coursemos_downloader.py.bak (\n')
-                        f.write('  echo 백업에서 복원 중: coursemos_downloader.py\n')
-                        f.write('  rename coursemos_downloader.py.bak coursemos_downloader.py\n')
-                        f.write(')\n')
-                        f.write('start "" python "' + app_dir + '\\coursemos_downloader.py"\n')
-                    
-                    # 임시 파일 정리 섹션
-                    f.write(':cleanup\n')
-                    f.write('echo 임시 파일 정리 중...\n')
-                    f.write('timeout /t 2 /nobreak > nul\n')  # 2초 더 대기
-                    f.write(f'rmdir /s /q "{temp_dir}"\n')
-                    f.write('echo 완료.\n')
-                    
-                    # 창 자동 닫기
-                    f.write('exit\n')
-                
-                self.update_progress.emit("업데이트 설치 준비 완료...", 90)
-                
-                # 배치 파일을 자동으로 닫히는 모드로 실행
-                # CREATE_NO_WINDOW 플래그를 사용하여 창 표시 없이 실행
-                si = subprocess.STARTUPINFO()
-                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                si.wShowWindow = 0  # SW_HIDE
-                
-                # 배치 파일 실행
-                subprocess.Popen(['cmd', '/c', batch_file], startupinfo=si)
-                
-                self.update_progress.emit("업데이트 설치 중...", 95)
-                self.update_completed.emit(True, "업데이트가 설치됩니다. 프로그램이 재시작됩니다.")
-                
-                # 현재 프로세스는 배치 파일에서 강제 종료됨 (taskkill 명령으로)
-                # 따라서 sys.exit()는 필요하지 않음
-                
-            elif sys.platform == 'darwin':  # macOS
-                # 쉘 스크립트 생성
-                shell_script = os.path.join(temp_dir, "update.sh")
-                with open(shell_script, 'w') as f:
-                    f.write('#!/bin/bash\n')
-                    f.write('echo "Coursemos Downloader 업데이트 중..."\n')
-                    f.write(f'echo "현재 프로세스(PID: {current_pid}) 종료 중..."\n')
-                    f.write(f'kill -9 {current_pid} >/dev/null 2>&1\n')
-                    f.write('sleep 3\n')  # 3초 대기
-                    
-                    # 앱 디렉토리로 이동
-                    f.write(f'cd "{app_dir}" || {{ echo "앱 디렉토리로 이동할 수 없습니다"; exit 1; }}\n')
-                    
-                    # 스크립트 백업 & 교체
-                    f.write(f'[ -f coursemos_downloader.py.bak ] && rm coursemos_downloader.py.bak\n')
-                    f.write(f'[ -f coursemos_downloader.py ] && mv coursemos_downloader.py coursemos_downloader.py.bak\n')
-                    
-                    # 새 파일 복사
-                    f.write(f'if [ ! -f "{main_file_path}" ]; then\n')
-                    f.write(f'  echo "오류: 소스 파일을 찾을 수 없습니다."\n')
-                    f.write(f'  if [ -f coursemos_downloader.py.bak ]; then\n')
-                    f.write(f'    mv coursemos_downloader.py.bak coursemos_downloader.py\n')
-                    f.write(f'    python3 "{app_dir}/coursemos_downloader.py" &\n')
-                    f.write(f'  fi\n')
-                    f.write(f'  exit 1\n')
-                    f.write(f'fi\n')
-                    
-                    # 메인 파일 복사
-                    f.write(f'echo "coursemos_downloader.py 복사 중..."\n')
-                    f.write(f'cp "{main_file_path}" "{app_dir}/coursemos_downloader.py" || {{ \n')
-                    f.write(f'  echo "파일 복사 실패"; \n')
-                    f.write(f'  if [ -f coursemos_downloader.py.bak ]; then\n')
-                    f.write(f'    mv coursemos_downloader.py.bak coursemos_downloader.py\n')
-                    f.write(f'  fi\n')
-                    f.write(f'  python3 "{app_dir}/coursemos_downloader.py" &\n')
-                    f.write(f'  exit 1; \n')
-                    f.write(f'}}\n')
-                    
-                    # README.md 파일 복사
-                    readme_path = os.path.join(github_repo_dir, "README.md")
-                    if os.path.exists(readme_path):
-                        f.write(f'echo "README.md 복사 중..."\n')
-                        f.write(f'cp "{readme_path}" "{app_dir}/README.md" || echo "README.md 복사 실패 (무시됨)"\n')
-                    
-                    # 다른 .py 파일 복사
-                    for py_file in py_files_found:
-                        if py_file != main_file_path:
-                            filename = os.path.basename(py_file)
-                            f.write(f'echo "{filename} 복사 중..."\n')
-                            f.write(f'cp "{py_file}" "{app_dir}/{filename}" || echo "{filename} 복사 실패 (무시됨)"\n')
-                    
-                    f.write(f'echo "업데이트 완료!"\n')
-                    
-                    # 앱 재시작
-                    f.write(f'python3 "{app_dir}/coursemos_downloader.py" &\n')
-                    
-                    # 임시 파일 정리
-                    f.write(f'sleep 2\n')
-                    f.write(f'rm -rf "{temp_dir}"\n')
-                
-                # 실행 권한 부여
-                os.chmod(shell_script, 0o755)
-                
-                # 쉘 스크립트 실행
-                subprocess.Popen(['bash', shell_script])
-                
-                self.update_progress.emit("업데이트 설치 중...", 95)
-                self.update_completed.emit(True, "업데이트가 설치됩니다. 프로그램이 재시작됩니다.")
-                
-                # 현재 프로세스는 쉘 스크립트에서 강제 종료됨
-                
-            else:  # Linux 등 다른 UNIX 계열
-                # 쉘 스크립트 생성 (macOS와 유사)
-                shell_script = os.path.join(temp_dir, "update.sh")
-                with open(shell_script, 'w') as f:
-                    f.write('#!/bin/bash\n')
-                    f.write('echo "Coursemos Downloader 업데이트 중..."\n')
-                    f.write(f'echo "현재 프로세스(PID: {current_pid}) 종료 중..."\n')
-                    f.write(f'kill -9 {current_pid} >/dev/null 2>&1\n')
-                    f.write('sleep 3\n')
-                    
-                    # 앱 디렉토리로 이동
-                    f.write(f'cd "{app_dir}" || {{ echo "앱 디렉토리로 이동할 수 없습니다"; exit 1; }}\n')
-                    
-                    # 스크립트 백업 & 교체
-                    f.write(f'[ -f coursemos_downloader.py.bak ] && rm coursemos_downloader.py.bak\n')
-                    f.write(f'[ -f coursemos_downloader.py ] && mv coursemos_downloader.py coursemos_downloader.py.bak\n')
-                    
-                    # 새 파일 복사
-                    f.write(f'if [ ! -f "{main_file_path}" ]; then\n')
-                    f.write(f'  echo "오류: 소스 파일을 찾을 수 없습니다."\n')
-                    f.write(f'  if [ -f coursemos_downloader.py.bak ]; then\n')
-                    f.write(f'    mv coursemos_downloader.py.bak coursemos_downloader.py\n')
-                    f.write(f'    python3 "{app_dir}/coursemos_downloader.py" &\n')
-                    f.write(f'  fi\n')
-                    f.write(f'  exit 1\n')
-                    f.write(f'fi\n')
-                    
-                    # 메인 파일 복사
-                    f.write(f'echo "coursemos_downloader.py 복사 중..."\n')
-                    f.write(f'cp "{main_file_path}" "{app_dir}/coursemos_downloader.py" || {{ \n')
-                    f.write(f'  echo "파일 복사 실패"; \n')
-                    f.write(f'  if [ -f coursemos_downloader.py.bak ]; then\n')
-                    f.write(f'    mv coursemos_downloader.py.bak coursemos_downloader.py\n')
-                    f.write(f'  fi\n')
-                    f.write(f'  python3 "{app_dir}/coursemos_downloader.py" &\n')
-                    f.write(f'  exit 1; \n')
-                    f.write(f'}}\n')
-                    
-                    # README.md 파일 복사
-                    readme_path = os.path.join(github_repo_dir, "README.md")
-                    if os.path.exists(readme_path):
-                        f.write(f'echo "README.md 복사 중..."\n')
-                        f.write(f'cp "{readme_path}" "{app_dir}/README.md" || echo "README.md 복사 실패 (무시됨)"\n')
-                    
-                    # 다른 .py 파일 복사
-                    for py_file in py_files_found:
-                        if py_file != main_file_path:
-                            filename = os.path.basename(py_file)
-                            f.write(f'echo "{filename} 복사 중..."\n')
-                            f.write(f'cp "{py_file}" "{app_dir}/{filename}" || echo "{filename} 복사 실패 (무시됨)"\n')
-                    
-                    f.write(f'echo "업데이트 완료!"\n')
-                    
-                    # 앱 재시작
-                    f.write(f'python3 "{app_dir}/coursemos_downloader.py" &\n')
-                    
-                    # 임시 파일 정리
-                    f.write(f'sleep 2\n')
-                    f.write(f'rm -rf "{temp_dir}"\n')
-                
-                # 실행 권한 부여
-                os.chmod(shell_script, 0o755)
-                
-                # 쉘 스크립트 실행
-                subprocess.Popen(['bash', shell_script])
-                
-                self.update_progress.emit("업데이트 설치 중...", 95)
-                self.update_completed.emit(True, "업데이트가 설치됩니다. 프로그램이 재시작됩니다.")
-                
-                # 현재 프로세스는 쉘 스크립트에서 강제 종료됨
-                
+                        self.progress_update.emit("파일 업데이트 실패: 권한 오류", 0)
+                        self.update_completed.emit(False, "파일 쓰기 권한이 없습니다. 관리자 권한으로 실행해보세요.")
+                        return
+            
+            # 6. 업데이트 완료
+            self.progress_update.emit("업데이트 완료", 100)
+            self.update_completed.emit(True, f"업데이트가 성공적으로 완료되었습니다. 프로그램을 재시작하세요.")
+            
+            # 7. 임시 파일 정리
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass  # 임시 파일 삭제 실패는 무시
+            
         except Exception as e:
-            self.update_completed.emit(False, f"업데이트 오류: {str(e)}")
+            self.progress_update.emit(f"업데이트 오류: {str(e)}", 0)
+            self.update_completed.emit(False, f"업데이트 중 오류가 발생했습니다: {str(e)}")
 
 
 def format_time(seconds):
@@ -630,8 +335,7 @@ class GitHubUpdaterManager:
         msg_box.setText(f"새 버전({new_version})이 있습니다. 현재 버전: {APP_VERSION}")
         msg_box.setInformativeText(
             "지금 업데이트하시겠습니까?\n\n"
-            "업데이트를 진행하면 프로그램이 종료되고 "
-            "업데이트 설치 후 자동으로 재시작됩니다."
+            "업데이트가 완료되면 프로그램을 재시작해야 합니다."
         )
         if detail_text:
             msg_box.setDetailedText(detail_text)
@@ -639,273 +343,68 @@ class GitHubUpdaterManager:
         msg_box.setDefaultButton(QMessageBox.Yes)
         
         if msg_box.exec() == QMessageBox.Yes:
-            self.parent.status_text.append(f"새 버전 v{new_version} 다운로드를 시작합니다...")
-            self.new_version = new_version
-            self._download_update(download_url, new_version)
+            self.parent.status_text.append(f"새 버전 v{new_version} 업데이트를 시작합니다...")
+            self._start_update(download_url, new_version)
     
-    def _download_update(self, download_url, version):
-        """업데이트 다운로드"""
-        self.downloader = GitHubDownloader(download_url, version)
-        self.downloader.progress_update.connect(self.parent.show_update_progress)
-        self.downloader.download_completed.connect(
-            lambda success, msg, path: self.on_download_completed(success, msg, path, version)
-        )
-        self.downloader.start()
+    def _start_update(self, download_url, version):
+        """업데이트 시작"""
+        # 현재 스크립트 경로
+        current_file = os.path.abspath(sys.argv[0])
+        
+        # 중복 인스턴스 확인
+        try:
+            script_name = os.path.basename(current_file)
+            import psutil
+            
+            count = 0
+            for proc in psutil.process_iter(['name', 'cmdline']):
+                try:
+                    cmdline = proc.info.get('cmdline', [])
+                    if len(cmdline) > 1 and script_name in cmdline[-1]:
+                        count += 1
+                except:
+                    pass
+                    
+            if count > 1:
+                QMessageBox.warning(
+                    self.parent,
+                    "업데이트 불가",
+                    "이 프로그램의 다른 인스턴스가 실행 중입니다.\n모든 인스턴스를 종료한 후에 업데이트를 진행해주세요."
+                )
+                return
+        except:
+            pass  # psutil 모듈이 없어도 계속 진행
+        
+        # 쓰기 권한 확인
+        try:
+            with open(current_file, 'a'):
+                pass
+        except:
+            QMessageBox.warning(
+                self.parent,
+                "업데이트 불가",
+                "현재 파일에 쓰기 권한이 없습니다.\n관리자 권한으로 프로그램을 실행하거나, 파일 권한을 확인해주세요."
+            )
+            return
+        
+        # 업데이트 스레드 시작
+        self.updater = DirectUpdater(download_url, current_file)
+        self.updater.progress_update.connect(self.parent.show_update_progress)
+        self.updater.update_completed.connect(self.on_update_completed)
+        self.updater.start()
         
         self.parent.status_text.append("업데이트 파일 다운로드 중...")
     
-    def on_download_completed(self, success, message, zip_path, version):
-        """다운로드 완료 처리"""
+    def on_update_completed(self, success, message):
+        """업데이트 완료 처리"""
         if success:
-            # 다운로드 성공 - 업데이트 도우미 실행
-            try:
-                # 업데이트 도우미 스크립트 경로
-                helper_script = self._create_updater_helper()
-                
-                if not helper_script:
-                    QMessageBox.warning(
-                        self.parent, 
-                        "업데이트 오류", 
-                        "업데이트 도우미 스크립트를 생성할 수 없습니다."
-                    )
-                    return
-                
-                # 필요한 모듈 설치 확인
-                try:
-                    import psutil
-                except ImportError:
-                    QMessageBox.information(
-                        self.parent,
-                        "모듈 설치 필요",
-                        "업데이트 진행을 위해 psutil 모듈이 필요합니다. 설치하시겠습니까?\n\n"
-                        "설치가 완료되면 업데이트가 계속됩니다."
-                    )
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
-                
-                # 현재 프로세스 ID와 앱 경로
-                current_pid = os.getpid()
-                app_path = os.path.abspath(sys.argv[0])
-                
-                # 업데이트 메시지 표시
-                QMessageBox.information(
-                    self.parent,
-                    "업데이트 준비 완료",
-                    f"업데이트 파일 다운로드가 완료되었습니다.\n\n"
-                    f"지금 프로그램을 종료하고 업데이트를 설치합니다. "
-                    f"설치가 완료되면 자동으로 재시작됩니다."
-                )
-                
-                # 업데이트 도우미 스크립트 실행
-                if sys.platform.startswith('win'):
-                    cmd = f'start /b python "{helper_script}" {current_pid} "{zip_path}" "{app_path}"'
-                    subprocess.Popen(cmd, shell=True)
-                else:
-                    cmd = ["python3", helper_script, str(current_pid), zip_path, app_path]
-                    subprocess.Popen(cmd)
-                
-                # 현재 프로그램 종료
-                QTimer.singleShot(500, lambda: sys.exit(0))
-                
-            except Exception as e:
-                QMessageBox.warning(
-                    self.parent, 
-                    "업데이트 오류", 
-                    f"업데이트 도우미 실행 중 오류가 발생했습니다: {str(e)}"
-                )
+            QMessageBox.information(
+                self.parent,
+                "업데이트 완료",
+                f"{message}\n\n프로그램을 종료 후 다시 실행하면 새 버전으로 실행됩니다."
+            )
         else:
-            # 다운로드 실패
-            QMessageBox.warning(self.parent, "업데이트 다운로드 실패", message)
-    
-    def _create_updater_helper(self):
-        """업데이트 도우미 스크립트 생성"""
-        try:
-            # 현재 스크립트 위치
-            app_dir = os.path.dirname(os.path.abspath(__file__))
-            helper_path = os.path.join(app_dir, "updater_helper.py")
-            
-            with open(helper_path, 'w') as f:
-                f.write('''"""
-업데이트 핼퍼 스크립트 - 메인 프로그램이 종료된 후 파일을 업데이트합니다.
-"""
-import os
-import sys
-import time
-import shutil
-import subprocess
-import traceback
-import zipfile
-import logging
-
-# 로깅 설정
-logging.basicConfig(
-    filename='updater_log.txt',
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-
-def wait_for_process_end(pid, timeout=30):
-    """지정된 PID의 프로세스가 종료될 때까지 대기"""
-    import psutil
-    
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            # 프로세스가 존재하는지 확인
-            process = psutil.Process(pid)
-            logging.info(f"프로세스 {pid} 종료 대기 중...")
-            time.sleep(1)
-        except psutil.NoSuchProcess:
-            # 프로세스가 이미 종료됨
-            logging.info(f"프로세스 {pid}가 종료되었습니다.")
-            return True
-    
-    # 타임아웃 발생
-    logging.warning(f"프로세스 {pid} 종료 대기 타임아웃")
-    return False
-
-def update_files(zip_path, app_dir, main_script):
-    """ZIP 파일에서 앱 디렉토리로 파일 업데이트"""
-    try:
-        # 임시 디렉토리 생성
-        temp_dir = os.path.join(os.path.dirname(zip_path), "temp_extract")
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        os.makedirs(temp_dir)
-        
-        logging.info(f"ZIP 파일 압축 해제 중: {zip_path}")
-        # ZIP 파일 압축 해제
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(temp_dir)
-        
-        # GitHub 압축 파일 구조 확인 (보통 최상위 폴더가 하나 있음)
-        extracted_items = os.listdir(temp_dir)
-        if len(extracted_items) == 1 and os.path.isdir(os.path.join(temp_dir, extracted_items[0])):
-            source_dir = os.path.join(temp_dir, extracted_items[0])
-        else:
-            source_dir = temp_dir
-        
-        # 메인 스크립트 파일 확인
-        main_script_name = os.path.basename(main_script)
-        source_main_script = os.path.join(source_dir, main_script_name)
-        
-        if not os.path.exists(source_main_script):
-            logging.error(f"소스 디렉토리에 {main_script_name} 파일이 없습니다.")
-            return False
-        
-        # 기존 파일 백업
-        backup_dir = os.path.join(app_dir, "backup")
-        if not os.path.exists(backup_dir):
-            os.makedirs(backup_dir)
-        
-        # 중요 파일 백업
-        if os.path.exists(main_script):
-            backup_path = os.path.join(backup_dir, f"{main_script_name}.bak")
-            logging.info(f"메인 스크립트 백업 중: {main_script} -> {backup_path}")
-            shutil.copy2(main_script, backup_path)
-        
-        # 파일 복사
-        logging.info(f"새 파일 복사 중: {source_dir} -> {app_dir}")
-        for item in os.listdir(source_dir):
-            source_item = os.path.join(source_dir, item)
-            target_item = os.path.join(app_dir, item)
-            
-            if os.path.isfile(source_item):
-                logging.info(f"파일 복사: {item}")
-                shutil.copy2(source_item, target_item)
-            elif os.path.isdir(source_item):
-                # 디렉토리가 이미 존재하는 경우 덮어쓰기
-                if os.path.exists(target_item):
-                    logging.info(f"디렉토리 갱신: {item}")
-                    # 중요한 디렉토리는 백업 (예: 설정 등)
-                    if item in ['config', 'settings', 'data']:
-                        backup_dir_path = os.path.join(backup_dir, item)
-                        shutil.copytree(target_item, backup_dir_path, dirs_exist_ok=True)
-                    # 기존 디렉토리 삭제
-                    shutil.rmtree(target_item)
-                
-                # 새 디렉토리 복사
-                logging.info(f"디렉토리 복사: {item}")
-                shutil.copytree(source_item, target_item)
-        
-        # 임시 디렉토리 정리
-        logging.info("임시 파일 정리 중...")
-        shutil.rmtree(temp_dir)
-        
-        # 원본 ZIP 파일도 삭제 옵션 (선택적)
-        # os.remove(zip_path)
-        
-        logging.info("업데이트 완료")
-        return True
-    
-    except Exception as e:
-        logging.error(f"업데이트 중 오류 발생: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
-
-def start_app(main_script):
-    """애플리케이션 시작"""
-    try:
-        logging.info(f"애플리케이션 재시작 중: {main_script}")
-        
-        if sys.platform.startswith('win'):
-            subprocess.Popen(f'start "" python "{main_script}"', shell=True)
-        else:
-            subprocess.Popen(['python3', main_script])
-        
-        logging.info("애플리케이션 시작됨")
-        return True
-    except Exception as e:
-        logging.error(f"애플리케이션 시작 중 오류 발생: {str(e)}")
-        return False
-
-def main():
-    """메인 함수"""
-    if len(sys.argv) < 4:
-        print("사용법: python updater_helper.py <pid> <zip_path> <app_path>")
-        return
-    
-    try:
-        # 인자 파싱
-        pid = int(sys.argv[1])
-        zip_path = sys.argv[2]
-        app_path = sys.argv[3]
-        
-        # 앱 디렉토리와 메인 스크립트 경로
-        app_dir = os.path.dirname(app_path)
-        main_script = app_path
-        
-        logging.info(f"업데이트 시작: PID={pid}, ZIP={zip_path}, APP={app_path}")
-        
-        # 1. 원본 프로세스 종료 대기
-        if not wait_for_process_end(pid):
-            logging.error("프로세스가 종료되지 않았습니다. 업데이트를 중단합니다.")
-            return
-        
-        # 2. 파일 업데이트
-        if not update_files(zip_path, app_dir, main_script):
-            logging.error("파일 업데이트 실패")
-            return
-        
-        # 3. 앱 재시작
-        if not start_app(main_script):
-            logging.error("앱 재시작 실패")
-            return
-        
-        logging.info("업데이트 과정 완료")
-    
-    except Exception as e:
-        logging.error(f"업데이트 도우미 오류: {str(e)}")
-        logging.error(traceback.format_exc())
-
-if __name__ == "__main__":
-    main()
-''')
-            
-            return helper_path
-        
-        except Exception as e:
-            print(f"업데이트 도우미 스크립트 생성 중 오류: {str(e)}")
-            return None
+            QMessageBox.warning(self.parent, "업데이트 실패", message)
 
 def on_update_completed(self, success, message):
     """업데이트 완료 또는 실패 처리"""
