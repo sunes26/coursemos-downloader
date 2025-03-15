@@ -21,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.0"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
 
@@ -71,6 +71,75 @@ class GitHubUpdateChecker(QThread):
         
         except Exception as e:
             print(f"업데이트 확인 오류: {str(e)}")
+
+
+class GitHubDownloader(QThread):
+    """GitHub 릴리스에서 업데이트 다운로드를 위한 스레드"""
+    progress_update = pyqtSignal(str, int)  # 메시지, 진행률(%)
+    download_completed = pyqtSignal(bool, str, str)  # 성공여부, 메시지, 다운로드 경로
+    
+    def __init__(self, download_url, version):
+        super().__init__()
+        self.download_url = download_url
+        self.version = version
+        
+    def run(self):
+        try:
+            # 다운로드 폴더 경로
+            download_folder = os.path.expanduser("~/Downloads")
+            if not os.path.exists(download_folder):
+                download_folder = tempfile.gettempdir()
+            
+            # 임시 파일 생성
+            temp_file = os.path.join(download_folder, f"coursemos_downloader_v{self.version}.zip")
+            
+            self.progress_update.emit("업데이트 다운로드 중...", 10)
+            
+            # 릴리스 파일 다운로드
+            response = requests.get(self.download_url, stream=True)
+            total_size = int(response.headers.get('content-length', 0))
+            
+            with open(temp_file, 'wb') as f:
+                downloaded = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        percent = int(downloaded / total_size * 100) if total_size > 0 else 0
+                        self.progress_update.emit(f"다운로드 중... {percent}%", 10 + percent // 2)
+            
+            self.progress_update.emit("압축 파일 다운로드 완료", 60)
+            
+            # 압축 해제할 폴더 생성
+            extract_folder = os.path.join(download_folder, f"coursemos_downloader_v{self.version}")
+            if os.path.exists(extract_folder):
+                shutil.rmtree(extract_folder)
+            os.makedirs(extract_folder)
+            
+            # ZIP 파일 압축 해제
+            self.progress_update.emit("압축 파일 해제 중...", 70)
+            with zipfile.ZipFile(temp_file, 'r') as zip_ref:
+                zip_ref.extractall(extract_folder)
+            
+            self.progress_update.emit("압축 해제 완료", 90)
+            
+            # 최상위 폴더 찾기 (GitHub ZIP 구조는 보통 최상위 폴더가 하나 있음)
+            extracted_items = os.listdir(extract_folder)
+            if len(extracted_items) == 1 and os.path.isdir(os.path.join(extract_folder, extracted_items[0])):
+                extract_folder = os.path.join(extract_folder, extracted_items[0])
+            
+            # coursemos_downloader.py 파일 확인
+            main_file = os.path.join(extract_folder, "coursemos_downloader.py")
+            if not os.path.exists(main_file):
+                self.download_completed.emit(False, "다운로드한 파일에 coursemos_downloader.py가 없습니다.", "")
+                return
+            
+            self.progress_update.emit("다운로드 및 압축 해제 완료", 100)
+            self.download_completed.emit(True, "새 버전 다운로드 완료", extract_folder)
+        
+        except Exception as e:
+            self.download_completed.emit(False, f"다운로드 오류: {str(e)}", "")
+
 
 
 class GitHubUpdater(QThread):
@@ -584,9 +653,8 @@ class GitHubUpdaterManager:
         msg_box.setWindowTitle("업데이트 가능")
         msg_box.setText(f"새 버전({new_version})이 있습니다. 현재 버전: {APP_VERSION}")
         msg_box.setInformativeText(
-            "지금 업데이트하시겠습니까?\n\n"
-            "참고: 업데이트를 진행하면 프로그램이 자동으로 종료되고, "
-            "업데이트 완료 후 새 버전이 자동으로 실행됩니다."
+            "지금 업데이트를 다운로드하시겠습니까?\n\n"
+            "다운로드가 완료되면 새 버전을 실행하기 위한 안내가 표시됩니다."
         )
         if detail_text:
             msg_box.setDetailedText(detail_text)
@@ -594,32 +662,58 @@ class GitHubUpdaterManager:
         msg_box.setDefaultButton(QMessageBox.Yes)
         
         if msg_box.exec() == QMessageBox.Yes:
-            self.parent.status_text.append("업데이트를 시작합니다. 프로그램이 잠시 후 재시작됩니다.")
-            # 2초 후에 업데이트 시작
-            QTimer.singleShot(2000, lambda: self._start_update(download_url))
+            self.parent.status_text.append(f"새 버전 v{new_version} 다운로드를 시작합니다...")
+            self._download_update(download_url, new_version)
     
-    def _start_update(self, download_url):
-        """업데이트 다운로드 및 설치 시작"""
-        app_path = os.path.abspath(sys.argv[0])
+    def _download_update(self, download_url, version):
+        """업데이트 다운로드"""
+        self.downloader = GitHubDownloader(download_url, version)
+        self.downloader.progress_update.connect(self.parent.show_update_progress)
+        self.downloader.download_completed.connect(
+            lambda success, msg, path: self.on_download_completed(success, msg, path, version)
+        )
+        self.downloader.start()
         
-        self.updater = GitHubUpdater(download_url, app_path)
-        self.updater.update_progress.connect(self.parent.show_update_progress)
-        self.updater.update_completed.connect(self.on_update_completed)
-        self.updater.start()
-        
-        self.parent.status_text.append("업데이트 다운로드 중...")
+        self.parent.status_text.append("업데이트 파일 다운로드 중...")
     
-    def on_update_completed(self, success, message):
-        """업데이트 완료 또는 실패 처리"""
+    def on_download_completed(self, success, message, folder_path, version):
+        """다운로드 완료 처리"""
         if success:
-            QMessageBox.information(
-                self.parent, 
-                "업데이트", 
-                message + "\n\n프로그램이 잠시 후 종료되고 업데이트된 버전이 자동으로 실행됩니다."
+            # 다운로드 성공 - 사용자에게 새 버전 실행 안내
+            main_py_path = os.path.join(folder_path, "coursemos_downloader.py")
+            
+            self.parent.status_text.append(f"새 버전(v{version}) 다운로드 완료: {folder_path}")
+            
+            msg_box = QMessageBox(self.parent)
+            msg_box.setWindowTitle("업데이트 다운로드 완료")
+            msg_box.setText(f"새 버전(v{version})이 다음 위치에 다운로드되었습니다:")
+            msg_box.setInformativeText(
+                f"{folder_path}\n\n"
+                "이 프로그램을 종료하고 새 버전을 실행하시겠습니까?\n"
+                "(아니오를 선택하면 나중에 직접 새 버전을 실행할 수 있습니다)"
             )
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.Yes)
+            
+            if msg_box.exec() == QMessageBox.Yes:
+                # 현재 프로그램 종료하고 새 프로그램 실행
+                try:
+                    if sys.platform.startswith('win'):
+                        subprocess.Popen(f'start "" python "{main_py_path}"', shell=True)
+                    else:
+                        subprocess.Popen(['python3', main_py_path])
+                    QTimer.singleShot(500, lambda: sys.exit(0))
+                except Exception as e:
+                    QMessageBox.warning(
+                        self.parent, 
+                        "실행 오류", 
+                        f"새 버전 실행 중 오류가 발생했습니다: {str(e)}\n\n"
+                        f"다음 경로에서 수동으로 실행해주세요: {main_py_path}"
+                    )
         else:
-            QMessageBox.warning(self.parent, "업데이트 실패", message)
-            self.parent.progress_bar.setVisible(False)
+            # 다운로드 실패
+            QMessageBox.warning(self.parent, "업데이트 다운로드 실패", message)
+
 def on_update_completed(self, success, message):
     """업데이트 완료 또는 실패 처리"""
     if success:
