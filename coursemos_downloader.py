@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QFileDialog
                            QLabel, QVBoxLayout, QHBoxLayout, QWidget, QProgressBar, 
                            QTextEdit, QMessageBox, QCheckBox, QFrame, QMenu, QAction)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QFont, QIcon, QPixmap
 
 # pip install packaging (버전 비교용)
 try:
@@ -21,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.14"
+APP_VERSION = "1.0.15"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
 
@@ -448,13 +448,27 @@ class CoursemosDownloader(QMainWindow):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         self.init_ui()
+
         
         # 업데이트 관리자 초기화
         self.updater_manager = GitHubUpdaterManager(self)
         
         # 앱 시작 시 자동 업데이트 확인
         QTimer.singleShot(1000, lambda: self.updater_manager.check_for_updates())
+    
+    def resource_path(self, relative_path):
+        """애플리케이션 리소스 파일의 절대 경로를 반환합니다.
+        PyInstaller로 패키징된 경우와 일반 Python 실행 시 모두 작동합니다."""
+        try:
+            # PyInstaller가 생성한 임시 폴더 경로
+            base_path = sys._MEIPASS
+        except Exception:
+            # 일반적인 Python 실행 시 스크립트 위치 기준
+            base_path = os.path.abspath(".")
         
+        return os.path.join(base_path, relative_path)
+    
+
     def init_ui(self):
         # 메인 윈도우 설정
         self.setWindowTitle(f'Coursemos Downloader v{APP_VERSION}')
@@ -468,17 +482,7 @@ class CoursemosDownloader(QMainWindow):
         left_panel.setFrameShape(QFrame.StyledPanel)
         left_layout = QVBoxLayout(left_panel)
         left_panel.setStyleSheet("background-color: #f0f0f0;")
-        # 로고 추가
-        logo_label = QLabel()
-        logo_path = self.resource_path("logo.png")  # 로고 파일 경로
-        if os.path.exists(logo_path):
-            logo_pixmap = QPixmap(logo_path)
-            # 로고 크기 조정 (너비 150px에 맞추고 비율 유지)
-            logo_pixmap = logo_pixmap.scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            logo_label.setPixmap(logo_pixmap)
-            logo_label.setAlignment(Qt.AlignCenter)
-            left_layout.addWidget(logo_label)
-            left_layout.addSpacing(10)  # 로고와 타이틀 사이 간격
+
         
         # 타이틀
         title_label = QLabel("Coursemos Downloader")
