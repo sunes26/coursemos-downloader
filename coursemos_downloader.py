@@ -14,25 +14,6 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QFileDialog
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 
-def print_directory_structure(path, indent=0):
-    """디렉토리 구조를 문자열로 반환합니다."""
-    result = []
-    
-    try:
-        items = os.listdir(path)
-        
-        for item in items:
-            item_path = os.path.join(path, item)
-            
-            if os.path.isdir(item_path):
-                result.append("  " * indent + f"📁 {item}/")
-                result.extend(print_directory_structure(item_path, indent + 1))
-            else:
-                result.append("  " * indent + f"📄 {item}")
-    except Exception as e:
-        result.append("  " * indent + f"❌ 오류: {str(e)}")
-    
-    return result
 
 
 
@@ -44,7 +25,7 @@ except ImportError:
     sys.exit(1)
 
 # 앱 버전 정보
-APP_VERSION = "1.0.25"
+APP_VERSION = "1.0.26"
 GITHUB_OWNER = "sunes26"  # 여기에 GitHub 사용자명 입력
 GITHUB_REPO = "coursemos-downloader"  # 저장소 이름
 
@@ -253,8 +234,6 @@ class DirectUpdater(QThread):
             
             # 디버깅: ZIP 파일 구조 출력
             self.progress_update.emit("ZIP 구조 분석 중...", 65)
-            structure = print_directory_structure(extract_dir)
-            self.progress_update.emit("\n".join(["ZIP 파일 구조:"] + structure), 68)
             
             # 3. 파일 찾기 - 확장자 확인
             self.progress_update.emit("업데이트 파일 찾는 중...", 70)
