@@ -1,1 +1,1 @@
-coursemos-downloader
+코스모스(이러닝)동영상 다운로드
