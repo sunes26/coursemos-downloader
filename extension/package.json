@@ -1,0 +1,14 @@
+{
+  "name": "coursemos-downloader-extension",
+  "version": "2.0.0",
+  "private": true,
+  "description": "LMS 강의 영상을 재인코딩 없이 MP4/M4A로 저장하는 Chrome 확장",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/extract.test.mjs test/dash.test.mjs test/fmp4.test.mjs",
+    "icons": "node tools/make-icons.mjs",
+    "preview": "npx --yes http-server . -p 8477 -c-1",
+    "e2e": "node test/download.integration.mjs"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "extension-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "http-server", "extension", "-p", "8477", "-c-1", "--silent"],
+      "port": 8477
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Coursemos Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="header">
+    <span class="logo" aria-hidden="true">
+      <svg width="9" height="10" viewBox="0 0 9 10" fill="none"><path d="M8.5 5 0 9.8V.2L8.5 5Z" fill="#fff"/></svg>
+    </span>
+    <h1 class="header__title">Coursemos Downloader</h1>
+    <button id="rescan" class="icon-button" type="button" title="다시 검색">↻</button>
+  </header>
+
+  <main class="body">
+    <!-- 영상 없음 -->
+    <section id="view-empty" class="view" hidden>
+      <div class="stack stack--center">
+        <span class="glyph glyph--muted" aria-hidden="true">
+          <svg width="14" height="16" viewBox="0 0 9 10" fill="none"><path d="M8.5 5 0 9.8V.2L8.5 5Z" fill="#D3D6D9"/></svg>
+        </span>
+        <p class="text-strong text-center">이 페이지에서 영상을 찾지 못했습니다</p>
+        <p class="text-muted text-center">영상을 한 번 재생한 뒤 다시 눌러주세요.<br>재생 중에 요청된 스트림까지 찾아냅니다.</p>
+        <div class="row row--center">
+          <button id="watch-site" class="link-button" type="button" hidden>이 사이트 자동 감지 켜기</button>
+          <button id="manual-url" class="link-button" type="button">영상 주소 직접 입력</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 감지됨 -->
+    <section id="view-ready" class="view" hidden>
+      <div class="stack">
+        <div id="list-header" class="row" hidden>
+          <span class="label" id="list-count"></span>
+        </div>
+        <ul id="video-list" class="video-list"></ul>
+
+        <div class="field" id="format-field">
+          <span class="label">저장 형식</span>
+          <div class="segmented" role="radiogroup" aria-label="저장 형식">
+            <button class="segment is-active" type="button" role="radio" aria-checked="true" data-format="mp4">MP4</button>
+            <button class="segment" type="button" role="radio" aria-checked="false" data-format="m4a">M4A</button>
+          </div>
+          <p class="text-muted">재인코딩 없이 원본 화질·음질 그대로 저장합니다</p>
+        </div>
+
+        <div class="field">
+          <label class="label" for="filename">파일 이름</label>
+          <div class="input">
+            <input id="filename" type="text" spellcheck="false" autocomplete="off">
+            <span id="extension" class="input__suffix">.mp4</span>
+          </div>
+        </div>
+
+        <button id="download" class="button button--primary" type="button">다운로드</button>
+      </div>
+    </section>
+
+    <!-- 진행 중 -->
+    <section id="view-progress" class="view" hidden>
+      <div class="stack">
+        <div class="card card--flat">
+          <span class="thumb" aria-hidden="true">
+            <svg width="11" height="13" viewBox="0 0 9 10" fill="none"><path d="M8.5 5 0 9.8V.2L8.5 5Z" fill="#fff"/></svg>
+          </span>
+          <span class="card__meta">
+            <span id="progress-title" class="text-strong text-clip"></span>
+            <span id="progress-stage" class="text-muted"></span>
+          </span>
+          <span id="progress-percent" class="percent">0%</span>
+        </div>
+
+        <div class="progress">
+          <div class="progress__track"><div id="progress-fill" class="progress__fill"></div></div>
+          <div class="row">
+            <span id="progress-detail" class="text-muted"></span>
+            <span id="progress-rate" class="text-muted"></span>
+          </div>
+        </div>
+
+        <button id="cancel" class="button button--secondary" type="button">취소</button>
+      </div>
+    </section>
+
+    <!-- 완료 / 오류 -->
+    <section id="view-result" class="view" hidden>
+      <div class="stack stack--center">
+        <span id="result-glyph" class="glyph glyph--success" aria-hidden="true"></span>
+        <p id="result-title" class="text-strong text-center"></p>
+        <p id="result-detail" class="text-muted text-center"></p>
+      </div>
+      <div class="row row--gap">
+        <button id="result-secondary" class="button button--secondary" type="button">닫기</button>
+        <button id="result-primary" class="button button--primary" type="button">다음 영상 받기</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span id="status-dot" class="dot"></span>
+    <span id="status-text" class="text-muted text-clip">확인 중…</span>
+    <span class="text-muted">v2.0.0</span>
+  </footer>
+
+  <script src="../common/extract.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

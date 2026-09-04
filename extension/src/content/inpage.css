@@ -1,0 +1,74 @@
+/* 인페이지 플로팅 저장 버튼 — 팝업과 같은 INU LMS 톤 */
+
+.cmx-save-button {
+  position: absolute;
+  right: 20px;
+  bottom: 52px;
+  z-index: 2147483000;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+
+  margin: 0;
+  padding: 11px 18px 11px 16px;
+  border: 0;
+  border-radius: 999px;
+
+  background: #3f6ad8;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(38, 51, 89, 0.32);
+
+  font-family: Pretendard, -apple-system, "Malgun Gothic", sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.1px;
+  white-space: nowrap;
+  cursor: pointer;
+
+  transition: background-color 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+}
+
+.cmx-save-button:hover {
+  background: #3358bc;
+}
+
+.cmx-save-button:active {
+  transform: translateY(1px);
+}
+
+.cmx-save-button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.cmx-save-button svg {
+  flex: none;
+}
+
+/* 진행 중 — 퍼센트를 표시하며 다시 눌리지 않게 잠근다 */
+.cmx-save-button--running {
+  background: #3358bc;
+  pointer-events: none;
+  min-width: 92px;
+  justify-content: center;
+}
+
+.cmx-save-button--done {
+  background: #17a26b;
+  pointer-events: none;
+}
+
+.cmx-save-button--error {
+  background: #e0483e;
+}
+
+@media (max-width: 640px) {
+  .cmx-save-button {
+    right: 12px;
+    bottom: 12px;
+    padding: 9px 14px;
+    font-size: 12px;
+  }
+}

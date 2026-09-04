@@ -1,0 +1,364 @@
+/* Coursemos Downloader 팝업 — INU LMS 톤에서 뽑은 토큰 */
+
+:root {
+  --bg-page: #fcfcfc;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f4f5f6;
+  --bg-brand-soft: #edf2fd;
+
+  --text-primary: #212529;
+  --text-secondary: #575e64;
+  --text-muted: #899199;
+  --text-on-brand: #ffffff;
+
+  --border-default: #e0e3e5;
+  --border-strong: #d3d6d9;
+
+  --brand-primary: #3f6ad8;
+  --brand-pressed: #3358bc;
+  --brand-link: #1181f9;
+
+  --player-dark: #2b333f;
+  --success: #17a26b;
+  --danger: #e0483e;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+}
+
+* { box-sizing: border-box; }
+
+/* .field / .row 의 display:flex 는 브라우저 기본 [hidden]{display:none} 보다
+   우선순위가 높다. 이게 없으면 hidden 을 켜도 그대로 보인다. */
+[hidden] { display: none !important; }
+
+body {
+  width: 380px;
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: Pretendard, -apple-system, "Malgun Gothic", "Noto Sans KR", sans-serif;
+  font-size: 13px;
+  line-height: 20px;
+  letter-spacing: -0.1px;
+}
+
+/* ---------- 레이아웃 ---------- */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.header__title {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-primary);
+  padding-left: 1px;
+}
+
+.body { padding: 16px; }
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-default);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.footer .text-clip { flex: 1; }
+
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.stack--center { align-items: center; gap: 10px; padding: 8px 0 4px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.row--gap { gap: 8px; margin-top: 14px; }
+.row--center { justify-content: center; gap: 14px; }
+.row--center .link-button { flex: none; }
+.row .text-muted:first-child { flex: 1; }
+.field { display: flex; flex-direction: column; gap: 7px; }
+
+/* ---------- 텍스트 ---------- */
+
+.label {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.text-strong { margin: 0; font-weight: 500; }
+.text-muted { margin: 0; font-size: 11px; line-height: 16px; color: var(--text-muted); }
+.text-center { text-align: center; }
+
+.text-clip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 영상 목록 ---------- */
+
+.video-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.card:hover { border-color: var(--border-strong); }
+
+.card.is-selected {
+  border-color: var(--brand-primary);
+  border-width: 1.5px;
+  padding: 11.5px;
+}
+
+.card--flat { cursor: default; }
+.card--flat:hover { border-color: var(--border-default); }
+
+.thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 72px;
+  height: 42px;
+  border-radius: 5px;
+  background: var(--player-dark);
+  padding-left: 2px;
+  overflow: hidden;
+}
+
+/* 캡처된 프레임이 있으면 재생 아이콘 자리를 대신 채운다 */
+.thumb:has(img) { padding-left: 0; }
+
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-surface);
+}
+
+.is-selected .checkbox {
+  border-color: var(--brand-primary);
+  background: var(--brand-primary);
+}
+
+.checkbox svg { display: none; }
+.is-selected .checkbox svg { display: block; }
+
+.percent { font-size: 12px; font-weight: 500; color: var(--brand-primary); }
+
+/* ---------- 형식 선택 ---------- */
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.segment {
+  flex: 1;
+  padding: 7px 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.segment.is-active {
+  background: var(--bg-surface);
+  color: var(--brand-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* ---------- 입력 ---------- */
+
+.input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.input:focus-within { border-color: var(--brand-primary); }
+
+.input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.input input:focus { outline: none; }
+.input__suffix { flex: none; color: var(--text-muted); }
+
+/* ---------- 버튼 ---------- */
+
+.button {
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.button--primary { background: var(--brand-primary); color: var(--text-on-brand); }
+.button--primary:hover { background: var(--brand-pressed); }
+
+.button--secondary {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.button--secondary:hover { background: var(--bg-subtle); }
+
+.button:disabled { opacity: 0.5; cursor: default; }
+
+.icon-button {
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.icon-button:hover { background: var(--bg-subtle); color: var(--text-secondary); }
+
+.link-button {
+  border: 0;
+  background: none;
+  color: var(--brand-link);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.link-button:hover { text-decoration: underline; }
+
+/* ---------- 진행률 ---------- */
+
+.progress { display: flex; flex-direction: column; gap: 10px; }
+
+.progress__track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+/* 폭 대신 transform을 애니메이션한다 — 레이아웃을 다시 계산하지 않는다.
+   트랙이 overflow:hidden + 라운드로 잘라주므로 눌린 끝단은 보이지 않는다. */
+.progress__fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--brand-primary);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.2s ease;
+}
+
+/* ---------- 상태 표시 ---------- */
+
+.glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.glyph--success { background: var(--bg-brand-soft); color: var(--success); }
+.glyph--error { background: #fbeeed; color: var(--danger); }
+.glyph--muted { background: var(--bg-subtle); border-radius: 12px; }
+
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.dot--on { background: var(--success); }
+.dot--busy { background: var(--brand-primary); }
+.dot--error { background: var(--danger); }
