@@ -8,9 +8,12 @@ import zipfile
 import shutil
 import atexit
 from bs4 import BeautifulSoup
+
+from m3u8_extract import extract_m3u8_urls, extract_page_title, sanitize_filename
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QFileDialog, 
                            QLabel, QVBoxLayout, QHBoxLayout, QWidget, QProgressBar, 
-                           QTextEdit, QMessageBox, QCheckBox, QFrame, QMenu, QAction)
+                           QTextEdit, QMessageBox, QCheckBox, QFrame, QMenu, QAction,
+                           QComboBox, QInputDialog, QLineEdit)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 
@@ -26,6 +29,13 @@ except ImportError:
 
 # 앱 버전 정보
 APP_VERSION = "1.1.0"
+
+# 일부 CDN이 기본 ffmpeg UA를 거부하므로 브라우저 UA를 사용
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+# Windows에서 ffmpeg 실행 시 콘솔 창이 뜨지 않도록 함
+CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 GITHUB_OWNER = "sunes26" 
 GITHUB_REPO = "coursemos-downloader" 
 
@@ -415,6 +425,9 @@ class FFmpegThread(QThread):
                 # MP3로 변환할 때는 오디오만 추출
                 command = [
                     ffmpeg_cmd,
+                    '-y',           # 기존 파일 덮어쓰기 (대화형 프롬프트 방지)
+                    '-nostdin',     # stdin 대기 금지
+                    '-user_agent', USER_AGENT,
                     '-i', self.m3u8_url,
                     '-b:a', '192k',  # 기본 비트레이트
                     '-codec:a', 'libmp3lame',  # MP3 인코더 사용
@@ -424,6 +437,9 @@ class FFmpegThread(QThread):
                 # MP4로 변환 (기본 방식)
                 command = [
                     ffmpeg_cmd,
+                    '-y',           # 기존 파일 덮어쓰기 (대화형 프롬프트 방지)
+                    '-nostdin',     # stdin 대기 금지
+                    '-user_agent', USER_AGENT,
                     '-i', self.m3u8_url,
                     '-c', 'copy',  # 코덱 복사
                     '-bsf:a', 'aac_adtstoasc',  # AAC 필터
@@ -435,39 +451,45 @@ class FFmpegThread(QThread):
             # 프로세스 실행 및 출력 캡처 (인코딩 명시)
             process = subprocess.Popen(
                 command,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,  # 읽지 않는 파이프는 데드락 원인이 됨
                 stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
                 universal_newlines=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=CREATE_NO_WINDOW
             )
             
-            # 출력 모니터링
-            while process.poll() is None:
-                output = process.stderr.readline()
+            # 출력 모니터링 (EOF까지 읽어 마지막 줄 유실 방지)
+            error_lines = []
+            for output in process.stderr:
                 if output:
+                    error_lines.append(output)
+                    if len(error_lines) > 50:
+                        error_lines.pop(0)
                     self.progress_update.emit(output.strip())
                     
                     # 진행률 추출 및 업데이트
                     if self.duration_ms:
-                        time_match = re.search(r'time=(\d+):(\d+):(\d+)\.(\d+)', output)
+                        time_match = re.search(r'time=(\d+):(\d+):(\d+)\.(\d{1,3})', output)
                         if time_match:
-                            hours, minutes, seconds, ms = map(int, time_match.groups())
-                            current_ms = hours * 3600000 + minutes * 60000 + seconds * 1000 + ms * 10
+                            hours, minutes, seconds, frac = time_match.groups()
+                            # 소수부 자릿수에 맞춰 밀리초로 환산 (2자리=센티초)
+                            frac_ms = int(frac) * (10 ** (3 - len(frac)))
+                            current_ms = (int(hours) * 3600000 + int(minutes) * 60000
+                                          + int(seconds) * 1000 + frac_ms)
                             percent = min(int(current_ms / self.duration_ms * 100), 100)
                             self.progress_percent.emit(percent)
             
             # 완료 확인
-            return_code = process.poll()
+            return_code = process.wait()
             if return_code == 0:
                 self.progress_percent.emit(100)  # 완료 시 100%로 설정
                 self.conversion_finished.emit(True, "변환 완료!", self.output_path)
             else:
-                try:
-                    error_output = process.stderr.read()
-                    self.conversion_finished.emit(False, f"변환 실패: {error_output}", "")
-                except UnicodeDecodeError:
-                    self.conversion_finished.emit(False, "변환 실패: 인코딩 오류가 발생했습니다", "")
+                error_output = ''.join(error_lines).strip()
+                self.conversion_finished.emit(
+                    False, f"변환 실패 (코드 {return_code}): {error_output}", "")
                     
         except Exception as e:
             self.conversion_finished.emit(False, f"오류 발생: {str(e)}", "")
@@ -477,10 +499,13 @@ class FFmpegThread(QThread):
         try:
             ffprobe_cmd = self.ffmpeg_manager.get_ffprobe_command()
             
-            command = [ffprobe_cmd, '-v', 'error', '-show_entries', 'format=duration', 
+            command = [ffprobe_cmd, '-v', 'error', '-user_agent', USER_AGENT,
+                      '-show_entries', 'format=duration',
                       '-of', 'default=noprint_wrappers=1:nokey=1', self.m3u8_url]
             
-            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace')
+            result = subprocess.run(command, capture_output=True, text=True,
+                                    encoding='utf-8', errors='replace',
+                                    creationflags=CREATE_NO_WINDOW)
             
             if result.returncode == 0 and result.stdout.strip():
                 # 초 단위 -> 밀리초 단위로 변환
@@ -680,7 +705,23 @@ class CoursemosDownloader(QMainWindow):
         
         # 선택된 파일 표시
         self.selected_file_label = QLabel("Selected: ")
+        self.selected_file_label.setWordWrap(True)
         left_layout.addWidget(self.selected_file_label)
+        
+        # m3u8 URL을 직접 입력하는 대체 경로
+        self.manual_url_btn = QPushButton("Enter m3u8 URL")
+        self.manual_url_btn.setFixedHeight(30)
+        self.manual_url_btn.clicked.connect(self.enter_url_manually)
+        left_layout.addWidget(self.manual_url_btn)
+        
+        left_layout.addSpacing(10)
+        
+        # 발견된 URL 선택 (여러 개일 때만 활성화)
+        left_layout.addWidget(QLabel("Video URL:"))
+        self.url_combo = QComboBox()
+        self.url_combo.setEnabled(False)
+        self.url_combo.currentIndexChanged.connect(self.on_url_selected)
+        left_layout.addWidget(self.url_combo)
         
         # 간격 추가
         left_layout.addSpacing(20)
@@ -767,9 +808,6 @@ class CoursemosDownloader(QMainWindow):
             self.html_file_path = file_path
             self.status_text.append(f"HTML 파일을 선택했습니다: {file_path}")
             
-            # URL 추출 시작
-            self.status_text.append("m3u8 링크를 찾을 수 없습니다. HTML 파일을 확인해주세요.")
-            
             # 자동으로 URL 추출 실행
             self.extract_urls()
     
@@ -788,102 +826,144 @@ class CoursemosDownloader(QMainWindow):
             self.settings.setValue("save_folder", folder_path)
     
     def sanitize_filename(self, filename):
-        """파일명에 사용할 수 없는 문자 제거"""
-        # 파일명으로 사용할 수 없는 문자 제거
-        invalid_chars = r'[\\/*?:"<>|]'
-        sanitized = re.sub(invalid_chars, '', filename)
-        # 긴 파일명은 축약
-        if len(sanitized) > 50:
-            sanitized = sanitized[:47] + '...'
-        return sanitized
-    
+        """파일명에 사용할 수 없는 문자 제거 (m3u8_extract 모듈에 위임)"""
+        return sanitize_filename(filename)
+
+    def read_html_file(self, file_path):
+        """여러 인코딩을 시도해 HTML 파일을 읽는다."""
+        for encoding in ('utf-8', 'utf-8-sig', 'cp949', 'euc-kr'):
+            try:
+                with open(file_path, 'r', encoding=encoding) as file:
+                    return file.read()
+            except UnicodeDecodeError:
+                continue
+
+        # 마지막 수단: 깨진 문자를 대체하여 읽기 (URL은 ASCII라 추출에 지장 없음)
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as file:
+            return file.read()
+
+    def set_m3u8_urls(self, urls, source_label):
+        """찾은 URL 목록을 UI에 반영한다."""
+        self.m3u8_urls = urls
+        self.url_combo.clear()
+
+        if not urls:
+            self.selected_url = None
+            self.url_combo.setEnabled(False)
+            self.download_btn.setEnabled(False)
+            self.status_text.append(
+                "m3u8 URL을 찾을 수 없습니다. "
+                "브라우저에서 '다른 이름으로 저장 > 웹페이지, 전체'로 "
+                "저장했는지 확인해주세요. "
+                "또는 'Enter m3u8 URL' 버튼으로 URL을 직접 입력할 수 있습니다."
+            )
+            return
+
+        for index, url in enumerate(urls):
+            self.url_combo.addItem(f"{index + 1}. {url}", url)
+
+        self.url_combo.setEnabled(len(urls) > 1)
+        self.url_combo.setCurrentIndex(0)
+        self.selected_url = urls[0]
+        self.download_btn.setEnabled(True)
+
+        self.status_text.append(f"{len(urls)}개의 m3u8 URL을 발견했습니다. ({source_label})")
+        for index, url in enumerate(urls):
+            self.status_text.append(f"{index + 1}. {url}")
+        if len(urls) > 1:
+            self.status_text.append("여러 개가 있으면 목록에서 원하는 URL을 선택하세요.")
+
+    def on_url_selected(self, index):
+        """URL 콤보박스 선택 변경 처리"""
+        if index < 0:
+            return
+        url = self.url_combo.itemData(index)
+        if url:
+            self.selected_url = url
+
+    def enter_url_manually(self):
+        """m3u8 URL 직접 입력"""
+        url, ok = QInputDialog.getText(
+            self, "m3u8 URL 입력",
+            "동영상 스트림(.m3u8) 주소를 붙여넣으세요:",
+            QLineEdit.Normal, ""
+        )
+
+        if not ok:
+            return
+
+        url = url.strip()
+        if not url:
+            return
+
+        if '.m3u8' not in url:
+            QMessageBox.warning(self, "경고", "m3u8 주소가 아닌 것 같습니다. 다시 확인해주세요.")
+            return
+
+        if not hasattr(self, 'page_title') or not self.page_title:
+            self.page_title = 'video'
+
+        self.status_text.append("URL을 직접 입력했습니다.")
+        self.set_m3u8_urls([url], "직접 입력")
+
+        # 직접 입력한 경우 파일명을 물어본다
+        name, ok = QInputDialog.getText(
+            self, "파일명", "저장할 파일 이름:", QLineEdit.Normal, self.page_title
+        )
+        if ok and name.strip():
+            self.page_title = self.sanitize_filename(name)
+        self.status_text.append(f"저장할 파일 이름: {self.page_title}")
+
     def extract_urls(self):
         """HTML 파일에서 m3u8 URL 추출"""
         if not hasattr(self, 'html_file_path'):
             self.status_text.append("HTML 파일을 먼저 선택해주세요.")
             return
-            
+
         try:
-            # 여러 인코딩을 시도
-            encodings = ['utf-8', 'cp949', 'euc-kr']
-            html_content = None
-            
-            for encoding in encodings:
-                try:
-                    with open(self.html_file_path, 'r', encoding=encoding) as file:
-                        html_content = file.read()
-                    break  # 성공적으로 읽었으면 반복 중단
-                except UnicodeDecodeError:
-                    continue
-                    
-            if html_content is None:
-                raise Exception("HTML 파일을 읽을 수 없습니다. 지원되지 않는 인코딩입니다.")
-                
-            # BeautifulSoup으로 파싱
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # 페이지 제목 추출 (자동 파일명 생성용)
-            title_tag = soup.find('title')
-            if title_tag and title_tag.string:
-                self.page_title = self.sanitize_filename(title_tag.string.strip())
-            else:
-                # 제목이 없으면 HTML 파일명을 기반으로 제목 설정
-                self.page_title = self.sanitize_filename(os.path.splitext(os.path.basename(self.html_file_path))[0])
-            
-            # m3u8 URL 정규식 패턴
-            m3u8_pattern = r'https?://[^\s\'\"]+\.m3u8[^\s\'\"]*'
-            
-            # HTML에서 스크립트와 소스 속성 검색
-            self.m3u8_urls = []
-            
-            # 스크립트 내용에서 검색
-            for script in soup.find_all('script'):
-                if script.string:
-                    urls = re.findall(m3u8_pattern, script.string)
-                    self.m3u8_urls.extend(urls)
-            
-            # 소스 태그에서 검색
-            for source in soup.find_all('source'):
-                if source.get('src'):
-                    url = source.get('src')
-                    if '.m3u8' in url:
-                        self.m3u8_urls.append(url)
-            
-            # video 태그에서 검색
-            for video in soup.find_all('video'):
-                if video.get('src'):
-                    url = video.get('src')
-                    if '.m3u8' in url:
-                        self.m3u8_urls.append(url)
-            
-            # 전체 HTML 텍스트에서 추가 검색
-            additional_urls = re.findall(m3u8_pattern, html_content)
-            self.m3u8_urls.extend(additional_urls)
-            
-            # 중복 제거
-            self.m3u8_urls = list(set(self.m3u8_urls))
-            
-            # 결과 표시
-            if self.m3u8_urls:
-                self.status_text.clear()
-                self.status_text.append(f"HTML 파일을 선택했습니다: {self.html_file_path}")
-                self.status_text.append(f"m3u8 링크를 찾을 수 있습니다.")
-                self.status_text.append(f"{len(self.m3u8_urls)}개의 m3u8 URL을 발견했습니다.")
-                
-                for i, url in enumerate(self.m3u8_urls):
-                    self.status_text.append(f"{i+1}. {url}")
-                
-                # 첫 번째 URL 선택
-                self.selected_url = self.m3u8_urls[0]
-                self.download_btn.setEnabled(True)
-            else:
-                self.status_text.clear()
-                self.status_text.append("m3u8 URL을 찾을 수 없습니다. HTML 파일을 확인해주세요.")
-                self.download_btn.setEnabled(False)
-                
+            html_content = self.read_html_file(self.html_file_path)
+
+            # 페이지 제목 -> 저장 파일명
+            self.page_title = extract_page_title(html_content, self.html_file_path)
+            self.status_text.append(f"저장할 파일 이름: {self.page_title}")
+
+            # URL 추출: 원본 텍스트 + BeautifulSoup 속성값 양쪽에서 검색
+            urls = extract_m3u8_urls(html_content)
+            urls.extend(self._extract_urls_from_attributes(html_content))
+            urls = list(dict.fromkeys(urls))  # 순서 유지 중복 제거
+
+            self.set_m3u8_urls(urls, os.path.basename(self.html_file_path))
+
         except Exception as e:
             self.status_text.append(f"URL 추출 중 오류가 발생했습니다: {str(e)}")
-    
+            self.download_btn.setEnabled(False)
+
+    def _extract_urls_from_attributes(self, html_content):
+        """BeautifulSoup으로 파싱한 뒤 모든 태그 속성값에서 m3u8을 찾는다.
+
+        data-setup / data-setup-lazy / src / data-src 등 플레이어 설정이
+        속성에 들어 있는 경우를 잡아낸다. (예: 인천대 LMS video.js)
+        """
+        found = []
+
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+        except Exception:
+            return found
+
+        for tag in soup.find_all(True):
+            for value in tag.attrs.values():
+                if isinstance(value, list):
+                    value = ' '.join(value)
+                if isinstance(value, str) and '.m3u8' in value:
+                    found.extend(extract_m3u8_urls(value))
+
+        for script in soup.find_all('script'):
+            if script.string and '.m3u8' in script.string:
+                found.extend(extract_m3u8_urls(script.string))
+
+        return found
+
     def start_download(self):
         """다운로드 시작"""
         if not self.mp4_checkbox.isChecked() and not self.mp3_checkbox.isChecked():

@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Coursemos Downloader",
+  "version": "2.0.1",
+  "description": "별도 프로그램을 설치하지 않고도 웹페이지의 동영상을 찾고, MP4 및 M4A로 저장합니다.",
+  "minimum_chrome_version": "116",
+
+  "permissions": [
+    "downloads",
+    "offscreen",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+
+  "host_permissions": [
+    "https://lms.inu.ac.kr/*"
+  ],
+
+  "optional_host_permissions": [
+    "*://*/*"
+  ],
+
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "Coursemos Downloader",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://lms.inu.ac.kr/*"],
+      "js": ["src/common/extract.js", "src/content/detect.js"],
+      "css": ["src/content/inpage.css"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}
