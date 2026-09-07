@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Coursemos Downloader",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "별도 프로그램을 설치하지 않고도 웹페이지의 동영상을 찾고, MP4 및 M4A로 저장합니다.",
   "minimum_chrome_version": "116",
 
