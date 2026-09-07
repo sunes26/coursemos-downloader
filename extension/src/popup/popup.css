@@ -62,15 +62,13 @@ body {
   letter-spacing: -0.2px;
 }
 
+/* 확장 아이콘 파일을 그대로 쓴다. 헤더용으로 따로 그리면
+   아이콘을 바꿀 때 한쪽만 남아 서로 어긋난다. */
 .logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  flex: none;
   width: 22px;
   height: 22px;
-  border-radius: var(--radius-sm);
-  background: var(--brand-primary);
-  padding-left: 1px;
+  display: block;
 }
 
 .body { padding: 16px; }
