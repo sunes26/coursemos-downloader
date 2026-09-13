@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>팝업 미리보기</title>
+<style>
+  body { margin: 0; padding: 24px; background: #eef0f2;
+         font-family: Pretendard, -apple-system, "Malgun Gothic", sans-serif; }
+  h1 { font-size: 15px; margin: 0 0 16px; color: #212529; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, 380px); gap: 20px;
+         align-items: start; justify-content: start; }
+  .case { display: flex; flex-direction: column; gap: 8px; }
+  .case > span { font-size: 11px; color: #575e64; }
+  .shell { width: 380px; background: #fcfcfc; border: 1px solid #d3d6d9;
+           border-radius: 10px; overflow: hidden; }
+</style>
+</head>
+<body>
+<h1>Coursemos Downloader — 팝업 상태 미리보기 (chrome API 스텁)</h1>
+<div id="inpage" style="margin-bottom:28px">
+  <div style="font-size:11px;color:#575e64;margin-bottom:8px">인페이지 버튼 상태 (플레이어 위에 뜨는 버튼)</div>
+  <div id="inpage-row" style="position:relative;display:flex;gap:14px;flex-wrap:wrap;
+       background:#2b333f;padding:18px;border-radius:10px"></div>
+</div>
+
+<div id="grid" class="grid"></div>
+
+<script>
+/**
+ * 확장을 로드하지 않고 팝업 화면을 눈으로 확인하기 위한 개발용 하니스.
+ * chrome.* 를 흉내낸 뒤 popup.html 마크업과 popup.js 를 그대로 실행한다.
+ *
+ * 실행: 확장 폴더를 정적 서버로 띄우고 /tools/preview.html 열기
+ */
+/** 캡처된 프레임 대신 쓸 합성 썸네일 — img 렌더링 경로를 그대로 태운다 */
+function fakeThumbnail() {
+  const c = document.createElement('canvas');
+  c.width = 160; c.height = 90;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 160, 90);
+  grad.addColorStop(0, '#e8912b');
+  grad.addColorStop(1, '#2b333f');
+  g.fillStyle = grad; g.fillRect(0, 0, 160, 90);
+  g.fillStyle = '#fff'; g.font = 'bold 15px sans-serif';
+  g.fillText('Listening #1', 12, 50);
+  return c.toDataURL('image/jpeg', 0.6);
+}
+
+const VIDEO = {
+  url: 'https://cdn.example.com/hls/abc/index.m3u8',
+  title: 'AI 리스닝 클리닉 1강 1차시',
+  kind: 'hls',
+  thumbnail: fakeThumbnail()
+};
+const VIDEO2 = {
+  url: 'https://cdn.example.com/hls/def/index.m3u8',
+  title: 'AI 리스닝 클리닉 1강 2차시',
+  kind: 'hls'
+};
+const DASH_VIDEO = {
+  url: 'https://dash.example.com/media/manifest.mpd',
+  title: '강의 영상 (DASH)',
+  kind: 'dash',
+  thumbnail: fakeThumbnail()
+};
+const FILE_VIDEO = {
+  url: 'https://cdn.example.com/videos/lecture.mp4',
+  title: '강의 영상 (직접 파일)',
+  kind: 'file',
+  thumbnail: fakeThumbnail()
+};
+
+const CASES = [
+  ['A — 영상 감지됨', {
+    detection: { pageHost: 'lms.inu.ac.kr', title: VIDEO.title, videos: [VIDEO] }, job: null
+  }],
+  ['B — 영상 여러 개', {
+    detection: { pageHost: 'lms.inu.ac.kr', title: VIDEO.title, videos: [VIDEO, VIDEO2] }, job: null
+  }],
+  ['C — 다운로드 중', {
+    detection: null,
+    job: { status: 'running', filename: VIDEO.title, format: 'mp4', stage: '내려받는 중',
+           progress: 0.42, segmentsDone: 37, segmentsTotal: 88,
+           bytes: 9_800_000, bytesPerSecond: 6_400_000 }
+  }],
+  ['D — 완료', {
+    detection: null,
+    job: { status: 'done', filename: VIDEO.title, format: 'mp4', progress: 1,
+           totalBytes: 24_749_489 }
+  }],
+  ['G — DASH', {
+    detection: { pageHost: 'dash.example.com', title: DASH_VIDEO.title, videos: [DASH_VIDEO] }, job: null
+  }],
+  ['H — 직접 파일 (형식 선택 없음)', {
+    detection: { pageHost: 'cdn.example.com', title: FILE_VIDEO.title, videos: [FILE_VIDEO] }, job: null
+  }],
+  ['E — 영상 없음', { detection: null, job: null }],
+  ['F — 오류', {
+    detection: null,
+    job: { status: 'error', filename: VIDEO.title, format: 'mp4',
+           error: '세그먼트 요청 실패 (HTTP 403)' }
+  }]
+];
+
+function makeChromeStub(state) {
+  const noop = () => {};
+  return {
+    runtime: {
+      onMessage: { addListener: noop },
+      sendMessage: (msg) => Promise.resolve(
+        msg && msg.type === 'CMX_GET_STATE' ? state : { ok: true })
+    },
+    tabs: { query: () => Promise.resolve([{ id: 1 }]) },
+    scripting: { executeScript: () => Promise.resolve([]) },
+    downloads: { showDefaultFolder: noop }
+  };
+}
+
+// ---- 인페이지 버튼 상태 미리보기 ----
+(function renderInpage() {
+  document.head.insertAdjacentHTML('beforeend',
+    '<link rel="stylesheet" href="../src/content/inpage.css">');
+
+  var ICON = '<svg width="14" height="16" viewBox="0 0 14 16" fill="none">' +
+    '<path d="M7 1v9M2.5 6.5L7 11l4.5-4.5M1 14.5h12" stroke="currentColor" ' +
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  [['idle', '이 영상 저장'], ['running', '42%'], ['done', '저장 완료'],
+   ['error', '실패 · 다시 시도']].forEach(function (pair) {
+    var b = document.createElement('button');
+    b.className = 'cmx-save-button cmx-save-button--' + pair[0];
+    b.style.position = 'static';
+    b.innerHTML = (pair[0] === 'running' ? '' : ICON) + '<span>' + pair[1] + '</span>';
+    document.getElementById('inpage-row').appendChild(b);
+  });
+})();
+
+(async function render() {
+  const markup = await (await fetch('../src/popup/popup.html')).text();
+  const doc = new DOMParser().parseFromString(markup, 'text/html');
+  const bodyHtml = doc.body.innerHTML.replace(/<script[\s\S]*?<\/script>/g, '');
+
+  document.head.insertAdjacentHTML('beforeend',
+    '<link rel="stylesheet" href="../src/popup/popup.css">');
+
+  const extractSrc = await (await fetch('../src/common/extract.js')).text();
+  const popupSrc = await (await fetch('../src/popup/popup.js')).text();
+
+  for (const [label, state] of CASES) {
+    const wrap = document.createElement('div');
+    wrap.className = 'case';
+    wrap.innerHTML = `<span>${label}</span><div class="shell"></div>`;
+    document.getElementById('grid').appendChild(wrap);
+
+    const shell = wrap.querySelector('.shell');
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'width:380px;border:0;display:block';
+    shell.appendChild(frame);
+
+    const fdoc = frame.contentDocument;
+    fdoc.open();
+    fdoc.write('<!DOCTYPE html><html><head><meta charset="utf-8">' +
+      '<link rel="stylesheet" href="../src/popup/popup.css"></head><body>' +
+      bodyHtml + '</body></html>');
+    fdoc.close();
+
+    const win = frame.contentWindow;
+    win.chrome = makeChromeStub(state);
+
+    // 스타일시트가 적용된 뒤 스크립트를 넣어야 높이 계산이 맞는다
+    await new Promise((r) => setTimeout(r, 120));
+    win.eval(extractSrc);
+    win.eval(popupSrc);
+    win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
+
+    await new Promise((r) => setTimeout(r, 200));
+    frame.style.height = fdoc.documentElement.scrollHeight + 'px';
+  }
+})();
+</script>
+</body>
+</html>

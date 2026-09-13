@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.ruff_cache/
+build/
+dist/
+*.spec
+*.bak
+*_new.exe
+update.bat
+node_modules/
+*.tgz
+
+# 에이전트 로컬 설정 (launch.json은 개발 서버 설정이라 공유한다)
+.claude/settings.local.json
