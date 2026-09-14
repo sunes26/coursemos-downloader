@@ -238,15 +238,17 @@
       .map(function (dir) { return dir + 'index.m3u8'; });
   }
 
-  /** 초 단위를 mm:ss 또는 h:mm:ss로 표시한다. */
+  /** 초 단위를 "1시간 25분 25초" / "25분 10초" / "45초"로 표시한다. */
   function formatDuration(seconds) {
     if (!seconds || seconds < 0) return '';
     var s = Math.round(seconds);
     var h = Math.floor(s / 3600);
     var m = Math.floor((s % 3600) / 60);
     var sec = s % 60;
-    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
-    return h > 0 ? h + ':' + pad(m) + ':' + pad(sec) : m + ':' + pad(sec);
+
+    if (h > 0) return h + '시간 ' + m + '분 ' + sec + '초';
+    if (m > 0) return m + '분 ' + sec + '초';
+    return sec + '초';
   }
 
   function formatBytes(bytes) {

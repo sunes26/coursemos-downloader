@@ -180,6 +180,17 @@
     return findPosterUrl(video);
   }
 
+  /**
+   * 재생 중인 <video>의 길이(초)를 읽는다. 캔버스 캡처와 달리 비용이 없으므로
+   * 썸네일과 달리 매 감지 보고(400ms)마다 읽어도 괜찮다.
+   * 라이브 스트림 등은 duration이 Infinity/NaN일 수 있어 걸러낸다.
+   */
+  function findVideoDuration() {
+    var video = document.querySelector('video');
+    if (video && isFinite(video.duration) && video.duration > 0) return video.duration;
+    return null;
+  }
+
   /** <video poster> 또는 video.js 포스터 div의 배경 이미지를 찾는다. */
   function findPosterUrl(video) {
     if (video && video.poster) return video.poster;
@@ -205,8 +216,9 @@
     var title = guessTitle();
 
     // 플레이어가 실제로 틀고 있는 건 하나뿐이라 첫 번째 영상에만 붙인다.
-    // 나머지에 같은 그림을 붙이면 다른 차시를 잘못 보여주게 된다.
+    // 나머지에 같은 그림/길이를 붙이면 다른 차시를 잘못 보여주게 된다.
     var thumbnail = (withThumbnail && urls.length) ? captureThumbnail() : null;
+    var duration = urls.length ? findVideoDuration() : null;
 
     return {
       pageUrl: location.href,
@@ -218,7 +230,8 @@
           kind: CMX.classifyUrl(url),
           // 영상이 여러 개면 파일명이 겹치지 않도록 번호를 붙인다
           title: urls.length > 1 ? title + ' (' + (index + 1) + ')' : title,
-          thumbnail: index === 0 ? thumbnail : null
+          thumbnail: index === 0 ? thumbnail : null,
+          duration: index === 0 ? duration : null
         };
       })
     };
@@ -316,7 +329,12 @@
 
   /** 서비스 워커가 탭으로 밀어주는 작업 상태를 버튼에 반영한다. */
   function applyJobToButton(job) {
-    if (!job) return;
+    if (!job) {
+      // 취소됨 — 결과 표시 없이 바로 기본 상태로 되돌아간다
+      state.downloading = false;
+      setButton('idle', '이 영상 저장');
+      return;
+    }
 
     if (job.status === 'running') {
       state.downloading = true;

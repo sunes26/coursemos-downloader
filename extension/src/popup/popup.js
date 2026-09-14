@@ -23,7 +23,7 @@
     tabId: null,
     pageUrl: null,
     detection: null,
-    selectedIndex: 0,
+    selected: new Set(),   // 다중 선택 가능 — Set<index>
     format: 'mp4'
   };
 
@@ -31,13 +31,14 @@
 
   function cacheElements() {
     ['view-empty', 'view-ready', 'view-progress', 'view-result',
-     'video-list', 'list-header', 'list-count', 'filename', 'extension',
+     'video-list', 'list-header', 'list-count', 'filename', 'filename-field', 'extension',
      'download', 'cancel', 'rescan', 'manual-url', 'watch-site', 'format-field',
+     'multi-select-hint',
      'progress-title', 'progress-stage', 'progress-percent', 'progress-fill',
-     'progress-detail', 'progress-rate',
+     'progress-detail', 'progress-rate', 'progress-queue',
      'result-glyph', 'result-title', 'result-detail',
      'result-primary', 'result-secondary',
-     'status-dot', 'status-text'
+     'status-dot', 'status-text', 'version-text'
     ].forEach(function (id) {
       el[id] = $(id);
     });
@@ -62,14 +63,15 @@
 
     el['list-header'].hidden = videos.length < 2;
     if (videos.length >= 2) {
-      el['list-count'].textContent = '감지된 영상 ' + videos.length + '개';
+      el['list-count'].textContent = '감지된 영상 ' + videos.length + '개' +
+        (state.selected.size > 1 ? ' · ' + state.selected.size + '개 선택' : '');
     }
 
     videos.forEach(function (video, index) {
       var li = document.createElement('li');
       var card = document.createElement('button');
       card.type = 'button';
-      card.className = 'card' + (index === state.selectedIndex ? ' is-selected' : '');
+      card.className = 'card' + (state.selected.has(index) ? ' is-selected' : '');
 
       var thumb = document.createElement('span');
       thumb.className = 'thumb';
@@ -95,7 +97,10 @@
 
       var sub = document.createElement('span');
       sub.className = 'text-muted text-clip';
-      sub.textContent = hostOf(video.url) + ' · ' + kindLabel(video.kind);
+      // 재생 길이를 알면 그걸 보여주고, 모르면 주소로 대신한다.
+      // HLS/DASH 같은 전송 방식은 사용자에게 의미가 없어 보여주지 않는다.
+      var duration = video.duration ? CMX.formatDuration(video.duration) : null;
+      sub.textContent = duration || hostOf(video.url);
 
       meta.appendChild(title);
       meta.appendChild(sub);
@@ -109,11 +114,7 @@
       card.appendChild(check);
 
       card.addEventListener('click', function () {
-        state.selectedIndex = index;
-        el['filename'].value = video.title;
-        el['format-field'].hidden = video.kind === 'file';
-        updateExtension();
-        renderVideoList();
+        toggleSelection(index, videos.length);
       });
 
       li.appendChild(card);
@@ -121,29 +122,68 @@
     });
   }
 
+  /**
+   * 영상이 하나뿐이면 계속 선택된 채로 둔다 — 다운로드 버튼이 비활성화될
+   * 이유가 없다. 여러 개일 땐 자유롭게 켜고 끌 수 있다(전부 꺼도 된다).
+   */
+  function toggleSelection(index, totalCount) {
+    if (totalCount <= 1) return;
+
+    if (state.selected.has(index)) {
+      state.selected.delete(index);
+    } else {
+      state.selected.add(index);
+    }
+    renderVideoList();
+    updateSelectionUI();
+  }
+
   function hostOf(url) {
     try { return new URL(url).host; } catch (e) { return '스트림'; }
   }
 
-  function kindLabel(kind) {
-    if (kind === 'dash') return 'DASH';
-    if (kind === 'file') return '파일';
-    return 'HLS';
+  function selectedIndices() {
+    return Array.from(state.selected).sort(function (a, b) { return a - b; });
   }
 
-  function selectedVideo() {
-    return state.detection && state.detection.videos[state.selectedIndex];
+  /** 선택이 정확히 하나일 때만 의미 있는 "그 영상". */
+  function singleSelectedVideo() {
+    var indices = selectedIndices();
+    if (indices.length !== 1 || !state.detection) return null;
+    return state.detection.videos[indices[0]];
+  }
+
+  /**
+   * 선택 개수에 따라 파일명 입력창 / 형식 선택 / 다운로드 버튼 문구를 갱신한다.
+   * 하나만 선택했을 때는 지금까지처럼 파일명을 직접 고칠 수 있고,
+   * 여럿을 선택했을 때는 각자의 제목으로 자동 저장된다.
+   */
+  function updateSelectionUI() {
+    var indices = selectedIndices();
+    var count = indices.length;
+
+    el['download'].disabled = count === 0;
+    el['download'].textContent = count > 1 ? ('선택한 ' + count + '개 다운로드') : '다운로드';
+
+    var anyFile = indices.some(function (i) {
+      return state.detection.videos[i].kind === 'file';
+    });
+    el['format-field'].hidden = anyFile || count === 0;
+
+    var single = singleSelectedVideo();
+    el['filename-field'].hidden = !single;
+    el['multi-select-hint'].hidden = count <= 1;
+
+    if (single) {
+      el['filename'].value = single.title;
+    }
+    updateExtension();
   }
 
   function renderReady() {
     showView('ready');
     renderVideoList();
-    var selected = selectedVideo();
-    el['filename'].value = selected ? selected.title : 'video';
-
-    // 통짜 파일은 그대로 받는 것 말고 선택지가 없다
-    el['format-field'].hidden = !!(selected && selected.kind === 'file');
-    updateExtension();
+    updateSelectionUI();
     setStatus(state.detection.pageHost + ' · ' +
       state.detection.videos.length + '개 감지됨', 'on');
   }
@@ -218,6 +258,13 @@
     el['progress-percent'].textContent = pct + '%';
     el['progress-fill'].style.transform = 'scaleX(' + (pct / 100) + ')';
 
+    // 대기열 배치 중이면 "2 / 5"처럼 몇 번째인지 보여준다
+    var inQueue = job.queueTotal > 1;
+    el['progress-queue'].hidden = !inQueue;
+    if (inQueue) {
+      el['progress-queue'].textContent = job.queueIndex + ' / ' + job.queueTotal;
+    }
+
     el['progress-detail'].textContent = job.segmentsTotal
       ? '세그먼트 ' + job.segmentsDone + ' / ' + job.segmentsTotal
       : '';
@@ -227,7 +274,7 @@
     if (job.bytesPerSecond > 0) parts.push(CMX.formatBytes(job.bytesPerSecond) + '/s');
     el['progress-rate'].textContent = parts.join(' · ');
 
-    setStatus('다운로드 중…', 'busy');
+    setStatus(inQueue ? '다운로드 중… (' + job.queueIndex + '/' + job.queueTotal + ')' : '다운로드 중…', 'busy');
   }
 
   function renderResult(job) {
@@ -263,9 +310,9 @@
   }
 
   function updateExtension() {
-    var selected = selectedVideo();
-    if (selected && selected.kind === 'file') {
-      el['extension'].textContent = '.' + CMX.fileExtensionOf(selected.url);
+    var single = singleSelectedVideo();
+    if (single && single.kind === 'file') {
+      el['extension'].textContent = '.' + CMX.fileExtensionOf(single.url);
       return;
     }
     el['extension'].textContent = state.format === 'm4a' ? '.m4a' : '.mp4';
@@ -280,8 +327,17 @@
     }
 
     state.detection = response.detection;
-    if (state.detection && state.detection.videos.length) renderReady();
-    else renderEmpty();
+    if (state.detection && state.detection.videos.length) {
+      // 기본은 첫 번째(대개 지금 재생 중인) 영상 하나만 — 기존 동작과 같다.
+      // 나머지는 사용자가 직접 체크해서 큐에 추가한다.
+      if (!state.selected.size) {
+        state.selected.add(0);
+      }
+      renderReady();
+    } else {
+      state.selected = new Set();
+      renderEmpty();
+    }
   }
 
   // ---------- 동작 ----------
@@ -353,6 +409,7 @@
 
   async function rescan() {
     setStatus('다시 검색하는 중…', 'busy');
+    state.selected = new Set();
     await refresh();
   }
 
@@ -369,33 +426,47 @@
       title: 'video',
       videos: [{ url: url, title: 'video', kind: CMX.classifyUrl(url) || 'hls' }]
     };
-    state.selectedIndex = 0;
+    state.selected = new Set([0]);
     renderReady();
   }
 
+  /**
+   * 선택된 영상들을 모두 큐에 올린다.
+   * 하나만 선택했으면 지금까지처럼 파일 이름을 직접 고칠 수 있고,
+   * 여럿이면 각 영상의 제목을 그대로 파일명으로 쓴다.
+   */
   async function startDownload() {
-    var video = selectedVideo();
-    if (!video) return;
+    var indices = selectedIndices();
+    if (!indices.length) return;
 
-    var filename = CMX.sanitizeFilename(el['filename'].value) || 'video';
-    el['download'].disabled = true;
-
-    var response = await chrome.runtime.sendMessage({
-      type: 'CMX_START_DOWNLOAD',
-      payload: {
-        tabId: state.tabId,
+    var items = indices.map(function (index) {
+      var video = state.detection.videos[index];
+      var filename = (indices.length === 1)
+        ? (CMX.sanitizeFilename(el['filename'].value) || 'video')
+        : (CMX.sanitizeFilename(video.title) || 'video');
+      return {
         url: video.url,
         kind: video.kind || 'hls',
         format: state.format,
         filename: filename
-      }
+      };
     });
 
-    el['download'].disabled = false;
-    if (response && !response.ok) setStatus(response.error, 'error');
+    el['download'].disabled = true;
+
+    var response = await chrome.runtime.sendMessage({
+      type: 'CMX_START_DOWNLOAD',
+      payload: { tabId: state.tabId, items: items }
+    });
+
+    if (response && !response.ok) {
+      el['download'].disabled = false;
+      setStatus(response.error, 'error');
+    }
   }
 
   async function clearJob() {
+    state.selected = new Set();
     await chrome.runtime.sendMessage({ type: 'CMX_CLEAR_JOB', tabId: state.tabId });
     refresh();
   }
@@ -434,7 +505,15 @@
 
     chrome.runtime.onMessage.addListener(function (msg) {
       if (msg && msg.type === 'CMX_JOB_UPDATE') {
-        if (msg.payload) apply({ detection: state.detection, job: msg.payload });
+        if (msg.payload) {
+          apply({ detection: state.detection, job: msg.payload });
+        } else {
+          // 취소됨 — 진행 화면을 닫고 최신 감지 상태로 되돌아간다.
+          // state.detection 이 비어 있을 수 있어(팝업을 진행 중에 열었을 때)
+          // 그냥 재조회한다.
+          state.selected = new Set();
+          refresh();
+        }
         return false;
       }
       return false;
@@ -444,6 +523,7 @@
   async function init() {
     cacheElements();
     bindEvents();
+    el['version-text'].textContent = 'v' + chrome.runtime.getManifest().version;
     var tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     state.tabId = tabs[0] && tabs[0].id;
     state.pageUrl = tabs[0] && tabs[0].url;
