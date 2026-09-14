@@ -1,5 +1,5 @@
 /**
- * 서비스 워커 — 감지 상태 보관, 배지 갱신, 다운로드 작업 조율.
+ * 서비스 워커 — 감지 상태 보관, 배지/아이콘 갱신, 다운로드 큐 조율.
  *
  * 실제 내려받기와 리먹스는 offscreen 문서에서 한다.
  * 서비스 워커는 언제든 종료될 수 있어 Blob URL을 만들 수 없고,
@@ -44,10 +44,32 @@ function persist() {
   chrome.storage.session.set({ [SESSION_KEY]: plain }).catch(() => {});
 }
 
-/** 진행 중인 작업 하나 (동시 다운로드는 지원하지 않는다) */
+/** 현재/가장 최근 작업 하나. 대기열은 아래 queue 배열에 따로 쌓인다. */
 let job = null;
 
-// ---------- 배지 ----------
+/** 아직 시작하지 않은 작업들. 하나가 끝나면 자동으로 다음 걸 시작한다. */
+let queue = [];
+
+/**
+ * 배치(한 번에 받기 누른 묶음) 진행률 표시용 카운터.
+ * 큐와 job이 모두 비면 다음 배치를 위해 초기화된다.
+ */
+let queueStats = { total: 0, completed: 0 };
+
+// ---------- 배지 & 툴바 아이콘 ----------
+
+const ICON_ACTIVE = {
+  16: 'icons/icon16.png',
+  32: 'icons/icon32.png',
+  48: 'icons/icon48.png',
+  128: 'icons/icon128.png'
+};
+const ICON_INACTIVE = {
+  16: 'icons/icon16-inactive.png',
+  32: 'icons/icon32-inactive.png',
+  48: 'icons/icon48-inactive.png',
+  128: 'icons/icon128-inactive.png'
+};
 
 async function setBadge(tabId, text, color) {
   try {
@@ -60,15 +82,48 @@ async function setBadge(tabId, text, color) {
   }
 }
 
+/** 감지/진행 여부에 따라 탭별로 컬러/회색조 아이콘을 바꾼다. */
+async function setToolbarIcon(tabId, active) {
+  try {
+    await chrome.action.setIcon({ tabId, path: active ? ICON_ACTIVE : ICON_INACTIVE });
+  } catch (e) {
+    // 탭이 이미 닫힌 경우 — 무시
+  }
+}
+
 function refreshBadge(tabId) {
-  if (job && job.tabId === tabId) {
+  if (job && job.tabId === tabId && job.status === 'running') {
     const pct = Math.round(job.progress * 100);
     setBadge(tabId, String(pct), '#3F6AD8');
+    setToolbarIcon(tabId, true);
     return;
   }
   const found = detections.get(tabId);
   const count = found ? found.videos.length : 0;
   setBadge(tabId, count ? String(count) : '', '#3F6AD8');
+  setToolbarIcon(tabId, count > 0);
+}
+
+// ---------- 다운로드 완료 알림 ----------
+
+/**
+ * 팝업을 계속 띄워두지 않아도 완료/실패를 알 수 있도록 OS 알림을 띄운다.
+ * 사용자가 직접 취소한 경우는 알릴 필요가 없어 제외한다.
+ */
+function notifyJobResult(finishedJob) {
+  if (!finishedJob || finishedJob.status === 'cancelled') return;
+
+  const ok = finishedJob.status === 'done';
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title: ok ? '다운로드 완료' : '다운로드 실패',
+    message: ok
+      ? `${finishedJob.filename} 저장을 마쳤습니다.`
+      : (finishedJob.error || '알 수 없는 오류로 실패했습니다.')
+  }).catch(() => {
+    // 알림 권한이 막혀 있어도 다운로드 자체는 계속 진행된다
+  });
 }
 
 // ---------- offscreen 문서 ----------
@@ -97,20 +152,50 @@ async function closeOffscreen() {
   }
 }
 
-// ---------- 작업 수명 주기 ----------
+// ---------- 큐 ----------
 
-async function startDownload(request) {
-  if (job && job.status === 'running') {
-    return { ok: false, error: '이미 다운로드가 진행 중입니다.' };
+/**
+ * 요청 하나(팝업의 다중 선택 또는 인페이지 버튼의 단건)를 큐에 쌓는다.
+ * 아무것도 돌고 있지 않으면 바로 시작한다.
+ */
+function enqueue(tabId, items) {
+  if (!items || !items.length) {
+    return { ok: false, error: '선택된 영상이 없습니다.' };
   }
 
+  // 큐와 현재 작업이 모두 비어 있었다면 새 배치로 취급해 카운터를 새로 센다.
+  if (!queue.length && (!job || job.status !== 'running')) {
+    queueStats = { total: 0, completed: 0 };
+  }
+  queueStats.total += items.length;
+
+  const queued = items.map((item, i) => ({
+    id: 'job_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 7),
+    tabId,
+    url: item.url,
+    kind: item.kind || 'hls',
+    format: item.format,
+    filename: item.filename
+  }));
+  queue = queue.concat(queued);
+
+  if (job && job.status === 'running') {
+    broadcast(); // 대기열 길이만 갱신해서 알려준다
+    return { ok: true, job: publicJob() };
+  }
+
+  processQueue();
+  return { ok: true, job: publicJob() };
+}
+
+/** 큐에서 다음 작업을 꺼내 실행한다. 이미 뭔가 돌고 있으면 아무것도 안 한다. */
+async function processQueue() {
+  if (job && job.status === 'running') return;
+  if (!queue.length) return;
+
+  const next = queue.shift();
   job = {
-    id: 'job_' + Date.now(),
-    tabId: request.tabId,
-    url: request.url,
-    kind: request.kind || 'hls',      // 'hls' | 'dash' | 'file'
-    format: request.format,           // 'mp4' | 'm4a'
-    filename: request.filename,
+    ...next,
     status: 'running',
     progress: 0,
     stage: '플레이리스트 확인 중',
@@ -118,16 +203,17 @@ async function startDownload(request) {
     segmentsTotal: 0,
     bytes: 0,
     bytesPerSecond: 0,
-    error: null
+    error: null,
+    queueIndex: queueStats.completed + 1,
+    queueTotal: queueStats.total
   };
+
   broadcast();
   refreshBadge(job.tabId);
 
-  // 통짜 파일은 브라우저 다운로드에 그대로 넘긴다.
-  // 디스크로 바로 흘려보내므로 메모리를 쓰지 않고 이어받기도 된다.
   if (job.kind === 'file') {
     await downloadDirectFile();
-    return { ok: true, job: publicJob() };
+    return;
   }
 
   await ensureOffscreen();
@@ -140,8 +226,37 @@ async function startDownload(request) {
       format: job.format
     }
   });
+}
 
-  return { ok: true, job: publicJob() };
+/** 작업 하나가 끝난 뒤 — 다음 큐 항목을 잇거나 offscreen 문서를 정리한다. */
+function afterJobSettled() {
+  queueStats.completed += 1;
+
+  if (queue.length > 0) {
+    // 완료 화면이 잠깐이라도 보이도록 살짝 텀을 둔 뒤 다음 항목으로 넘어간다
+    setTimeout(processQueue, 900);
+  } else if (job && job.kind !== 'file') {
+    setTimeout(closeOffscreen, 5000);
+  }
+}
+
+// ---------- 작업 수명 주기 ----------
+
+/**
+ * 팝업(다중 선택 가능) · 인페이지 버튼(단건) 양쪽에서 들어오는 다운로드 요청.
+ * request.items 가 있으면 배치로, 없으면 단건 호출을 배치 1개짜리로 감싼다.
+ */
+async function startDownload(request) {
+  const items = (request.items && request.items.length)
+    ? request.items
+    : [{
+        url: request.url,
+        kind: request.kind || 'hls',
+        format: request.format,
+        filename: request.filename
+      }];
+
+  return enqueue(request.tabId, items);
 }
 
 async function downloadDirectFile() {
@@ -165,7 +280,10 @@ async function downloadDirectFile() {
   if (job.tabId != null) {
     setBadge(job.tabId, job.status === 'done' ? '✓' : '!',
       job.status === 'done' ? '#17A26B' : '#E0483E');
+    setToolbarIcon(job.tabId, true);
   }
+  notifyJobResult(job);
+  afterJobSettled();
 }
 
 async function finishDownload(payload) {
@@ -176,7 +294,8 @@ async function finishDownload(payload) {
     job.error = payload.error || '알 수 없는 오류';
     broadcast();
     refreshBadge(job.tabId);
-    await closeOffscreen();
+    notifyJobResult(job);
+    afterJobSettled();
     return;
   }
 
@@ -200,26 +319,38 @@ async function finishDownload(payload) {
   if (job.tabId != null) {
     setBadge(job.tabId, job.status === 'done' ? '✓' : '!',
       job.status === 'done' ? '#17A26B' : '#E0483E');
+    setToolbarIcon(job.tabId, true);
   }
+  notifyJobResult(job);
+  afterJobSettled();
 
   // Blob URL 회수는 offscreen 문서를 닫으면 함께 정리된다.
-  // 다운로드가 실제로 시작된 뒤에 닫아야 하므로 잠시 뒤로 미룬다.
-  setTimeout(closeOffscreen, 5000);
+  // afterJobSettled 이 다음 큐 항목으로 넘어가지 않을 때만 여기서 닫힌다.
 }
 
 function cancelDownload() {
   if (!job || job.status !== 'running') return { ok: false };
+  const cancelledTabId = job.tabId;
   chrome.runtime.sendMessage({ type: 'CMX_OFFSCREEN_CANCEL', payload: { jobId: job.id } });
-  job.status = 'cancelled';
-  job.stage = '취소됨';
+
+  // 남은 대기열도 함께 취소한다 — 부분 취소는 헷갈리기만 한다
+  queue = [];
+  queueStats = { total: 0, completed: 0 };
+
+  // "취소됨" 결과 화면 없이 바로 기본 화면(감지 목록)으로 돌아간다.
+  // job을 완전히 비워두면, 취소 직후 offscreen 쪽에서 뒤늦게 도착하는
+  // 실패 응답(finishDownload)도 job.id가 안 맞아 자동으로 무시된다.
+  job = null;
+
   broadcast();
-  if (job.tabId != null) refreshBadge(job.tabId);
+  if (cancelledTabId != null) refreshBadge(cancelledTabId);
   closeOffscreen();
   return { ok: true };
 }
 
 function publicJob() {
-  return job ? { ...job } : null;
+  if (!job) return null;
+  return { ...job, queueRemaining: queue.length };
 }
 
 /**
@@ -407,6 +538,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   detections.delete(tabId);
   persist();
+  queue = queue.filter((item) => item.tabId !== tabId);
   if (job && job.tabId === tabId && job.status === 'running') cancelDownload();
 });
 

@@ -50,12 +50,21 @@ const VIDEO = {
   url: 'https://cdn.example.com/hls/abc/index.m3u8',
   title: 'AI 리스닝 클리닉 1강 1차시',
   kind: 'hls',
-  thumbnail: fakeThumbnail()
+  thumbnail: fakeThumbnail(),
+  duration: 1450 // 24:10 — 재생 길이를 알 때
 };
 const VIDEO2 = {
   url: 'https://cdn.example.com/hls/def/index.m3u8',
   title: 'AI 리스닝 클리닉 1강 2차시',
   kind: 'hls'
+  // duration 없음 — 목록의 두 번째 항목처럼 아직 재생하지 않은 영상
+};
+const VIDEO_LONG = {
+  url: 'https://cdn.example.com/hls/ghi/index.m3u8',
+  title: '경영학원론 중간고사 대비 특강',
+  kind: 'hls',
+  thumbnail: fakeThumbnail(),
+  duration: 5125 // 1시간 25분 25초
 };
 const DASH_VIDEO = {
   url: 'https://dash.example.com/media/manifest.mpd',
@@ -74,6 +83,9 @@ const CASES = [
   ['A — 영상 감지됨', {
     detection: { pageHost: 'lms.inu.ac.kr', title: VIDEO.title, videos: [VIDEO] }, job: null
   }],
+  ['A2 — 1시간 넘는 영상', {
+    detection: { pageHost: 'lms.inu.ac.kr', title: VIDEO_LONG.title, videos: [VIDEO_LONG] }, job: null
+  }],
   ['B — 영상 여러 개', {
     detection: { pageHost: 'lms.inu.ac.kr', title: VIDEO.title, videos: [VIDEO, VIDEO2] }, job: null
   }],
@@ -82,6 +94,13 @@ const CASES = [
     job: { status: 'running', filename: VIDEO.title, format: 'mp4', stage: '내려받는 중',
            progress: 0.42, segmentsDone: 37, segmentsTotal: 88,
            bytes: 9_800_000, bytesPerSecond: 6_400_000 }
+  }],
+  ['C2 — 대기열 진행 중 (2/5)', {
+    detection: null,
+    job: { status: 'running', filename: VIDEO2.title, format: 'mp4', stage: '내려받는 중',
+           progress: 0.18, segmentsDone: 5, segmentsTotal: 30,
+           bytes: 1_200_000, bytesPerSecond: 3_100_000,
+           queueIndex: 2, queueTotal: 5 }
   }],
   ['D — 완료', {
     detection: null,
@@ -99,16 +118,43 @@ const CASES = [
     detection: null,
     job: { status: 'error', filename: VIDEO.title, format: 'mp4',
            error: '세그먼트 요청 실패 (HTTP 403)' }
-  }]
+  }],
+  ['I — 취소 버튼을 눌러보세요 → 결과 화면 없이 바로 기본 화면으로', {
+    detection: null,
+    job: { status: 'running', filename: VIDEO.title, format: 'mp4', stage: '내려받는 중',
+           progress: 0.6, segmentsDone: 53, segmentsTotal: 88,
+           bytes: 14_000_000, bytesPerSecond: 6_400_000 }
+  }, { pageHost: 'lms.inu.ac.kr', title: VIDEO.title, videos: [VIDEO, VIDEO2] }]
 ];
 
-function makeChromeStub(state) {
+/**
+ * afterCancel 이 있으면 실제 서비스 워커처럼 굴어본다 —
+ * CMX_CANCEL_DOWNLOAD 를 받으면 job을 비우고 CMX_JOB_UPDATE(null)을
+ * 방송해서, popup.js의 취소 처리 경로(기본 화면으로 복귀)를 그대로 태운다.
+ */
+function makeChromeStub(state, afterCancel) {
   const noop = () => {};
+  const listeners = [];
+  let current = state;
+
   return {
     runtime: {
-      onMessage: { addListener: noop },
-      sendMessage: (msg) => Promise.resolve(
-        msg && msg.type === 'CMX_GET_STATE' ? state : { ok: true })
+      getManifest: () => ({ version: '0.0.0-preview' }),
+      onMessage: { addListener: (fn) => listeners.push(fn) },
+      sendMessage: (msg) => {
+        if (msg && msg.type === 'CMX_GET_STATE') return Promise.resolve(current);
+
+        if (msg && msg.type === 'CMX_CANCEL_DOWNLOAD' && afterCancel) {
+          current = { detection: afterCancel, job: null };
+          setTimeout(function () {
+            listeners.forEach(function (fn) {
+              fn({ type: 'CMX_JOB_UPDATE', payload: null });
+            });
+          }, 30);
+        }
+
+        return Promise.resolve({ ok: true });
+      }
     },
     tabs: { query: () => Promise.resolve([{ id: 1 }]) },
     scripting: { executeScript: () => Promise.resolve([]) },
@@ -146,7 +192,7 @@ function makeChromeStub(state) {
   const extractSrc = await (await fetch('../src/common/extract.js')).text();
   const popupSrc = await (await fetch('../src/popup/popup.js')).text();
 
-  for (const [label, state] of CASES) {
+  for (const [label, state, afterCancel] of CASES) {
     const wrap = document.createElement('div');
     wrap.className = 'case';
     wrap.innerHTML = `<span>${label}</span><div class="shell"></div>`;
@@ -165,7 +211,7 @@ function makeChromeStub(state) {
     fdoc.close();
 
     const win = frame.contentWindow;
-    win.chrome = makeChromeStub(state);
+    win.chrome = makeChromeStub(state, afterCancel);
 
     // 스타일시트가 적용된 뒤 스크립트를 넣어야 높이 계산이 맞는다
     await new Promise((r) => setTimeout(r, 120));

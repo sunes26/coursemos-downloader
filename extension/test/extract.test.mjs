@@ -116,8 +116,9 @@ test('암호화된 스트림을 표시한다', () => {
 });
 
 test('시간과 용량을 사람이 읽는 형태로 만든다', () => {
-  assert.equal(CMX.formatDuration(869), '14:29');
-  assert.equal(CMX.formatDuration(3661), '1:01:01');
+  assert.equal(CMX.formatDuration(45), '45초');
+  assert.equal(CMX.formatDuration(869), '14분 29초');
+  assert.equal(CMX.formatDuration(3661), '1시간 1분 1초');
   assert.equal(CMX.formatBytes(0), '0 B');
   assert.equal(CMX.formatBytes(1536), '1.5 KB');
   assert.equal(CMX.formatBytes(224 * 1048576), '224.0 MB');

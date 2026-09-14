@@ -10,5 +10,8 @@ update.bat
 node_modules/
 *.tgz
 
+# tools/make-package.mjs 결과물 — 배포 때마다 만들어지는 산출물이라 커밋하지 않는다
+*.zip
+
 # 에이전트 로컬 설정 (launch.json은 개발 서버 설정이라 공유한다)
 .claude/settings.local.json

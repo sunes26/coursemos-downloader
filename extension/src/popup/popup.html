@@ -45,13 +45,15 @@
           <p class="text-muted">재인코딩 없이 원본 화질·음질 그대로 저장합니다</p>
         </div>
 
-        <div class="field">
+        <div class="field" id="filename-field">
           <label class="label" for="filename">파일 이름</label>
           <div class="input">
             <input id="filename" type="text" spellcheck="false" autocomplete="off">
             <span id="extension" class="input__suffix">.mp4</span>
           </div>
         </div>
+
+        <p id="multi-select-hint" class="text-muted" hidden>선택한 영상은 각각의 제목으로 자동 저장되고, 순서대로 하나씩 다운로드됩니다.</p>
 
         <button id="download" class="button button--primary" type="button">다운로드</button>
       </div>
@@ -68,6 +70,7 @@
             <span id="progress-title" class="text-strong text-clip"></span>
             <span id="progress-stage" class="text-muted"></span>
           </span>
+          <span id="progress-queue" class="label" hidden></span>
           <span id="progress-percent" class="percent">0%</span>
         </div>
 
@@ -100,7 +103,7 @@
   <footer class="footer">
     <span id="status-dot" class="dot"></span>
     <span id="status-text" class="text-muted text-clip">확인 중…</span>
-    <span class="text-muted">v2.0.1</span>
+    <span id="version-text" class="text-muted"></span>
   </footer>
 
   <script src="../common/extract.js"></script>
